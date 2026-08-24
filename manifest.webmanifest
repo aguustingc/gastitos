@@ -1,0 +1,16 @@
+{
+  "name": "Gastitos",
+  "short_name": "Gastitos",
+  "description": "Gastitos — tus finanzas personales, sencillas y offline.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F6C9",
+  "theme_color": "#F6F6C9",
+  "lang": "es",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

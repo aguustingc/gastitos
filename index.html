@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1" />
+  <meta name="theme-color" content="#F6F6C9" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Gastitos" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Gastitos</title>
+</head>
+<body>
+  <main id="app" aria-live="polite">
+    <!-- Views are injected here by app.js -->
+  </main>
+
+  <nav id="nav" aria-label="Navegación principal">
+    <button data-nav="hoy" class="on">Hoy</button>
+    <button data-nav="plan">Plan</button>
+    <button data-nav="gastos">Gastos</button>
+    <button data-nav="insights">Insights</button>
+    <button data-nav="ahorro">Ahorro</button>
+  </nav>
+
+  <div id="sheet" class="sheet" aria-hidden="true">
+    <div class="sheet-scrim" data-sheet-close></div>
+    <section class="sheet-panel" role="dialog" aria-modal="true">
+      <header class="sheet-head">
+        <button class="sheet-close" data-sheet-close aria-label="Cerrar">×</button>
+        <h2 id="sheet-title">·</h2>
+      </header>
+      <div id="sheet-body"></div>
+    </section>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
