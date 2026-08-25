@@ -58,15 +58,15 @@ const DB = {
 /* ---------- Categorías por defecto ---------- */
 
 const DEFAULT_CATS = [
-  { nombre: 'Supermercado',    color: '#4FA095', orden: 1 },
-  { nombre: 'Comer afuera',    color: '#D68A2A', orden: 2 },
-  { nombre: 'Transporte',      color: '#153462', orden: 3 },
-  { nombre: 'Servicios',       color: '#8E9BAA', orden: 4 },
-  { nombre: 'Salud',           color: '#C0392B', orden: 5 },
-  { nombre: 'Entretenimiento', color: '#8E5FC9', orden: 6 },
-  { nombre: 'Compras',         color: '#E7A3B5', orden: 7 },
-  { nombre: 'Educación',       color: '#4A7C99', orden: 8 },
-  { nombre: 'Otros',           color: '#6B7075', orden: 99 }
+  { nombre: 'Supermercado',    color: '#4FA095', icono: '🛒', orden: 1 },
+  { nombre: 'Comer afuera',    color: '#C9852E', icono: '🍔', orden: 2 },
+  { nombre: 'Transporte',      color: '#7D8471', icono: '🚌', orden: 3 },
+  { nombre: 'Servicios',       color: '#9AA89C', icono: '💡', orden: 4 },
+  { nombre: 'Salud',           color: '#C0392B', icono: '💊', orden: 5 },
+  { nombre: 'Entretenimiento', color: '#9568C9', icono: '🎬', orden: 6 },
+  { nombre: 'Compras',         color: '#E29BB3', icono: '🛍️', orden: 7 },
+  { nombre: 'Educación',       color: '#A8735A', icono: '📚', orden: 8 },
+  { nombre: 'Otros',           color: '#7A8079', icono: '📦', orden: 99 }
 ];
 
 async function ensureSeed(){
@@ -94,7 +94,9 @@ const state = {
   planActual: null,
   currency: '$', locale: 'es-AR',
   reminder: { enabled: false, hour: 20, dismissed: '' },
-  notifiedToday: ''
+  notifiedToday: '',
+  insightsTab: 'gastos',
+  onboardDismissed: false
 };
 
 function monthKey(d){ const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); return `${y}-${m}`; }
@@ -152,6 +154,52 @@ function moneyC(n){
 
 function ordinal(n){ return n; } // reservado
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+// Badge circular con ícono de categoría (color de fondo suave + emoji)
+function catBadge(c, size){
+  if (!c) return `<span class="cicon${size==='sm'?' sm':''}" style="background:#7A807933">📦</span>`;
+  return `<span class="cicon${size==='sm'?' sm':''}" style="background:${c.color}33">${c.icono || '•'}</span>`;
+}
+
+/* ---------- Teclado numérico reutilizable ---------- */
+
+function keypadHtml(id, currency, initialValue){
+  const initRaw = initialValue ? String(initialValue).replace('.', ',') : '';
+  return `
+    <div class="keypad-display" id="${id}-display">
+      <span class="cur">${currency}</span><span class="val" data-raw="${esc(initRaw)}">${initRaw || '0'}</span>
+    </div>
+    <div class="keypad-grid" id="${id}-grid">
+      ${['1','2','3','4','5','6','7','8','9',',','0','⌫'].map(k =>
+        `<button type="button" class="${(k===','||k==='⌫') ? 'op' : ''}" data-k="${k}">${k}</button>`
+      ).join('')}
+    </div>
+  `;
+}
+
+function wireKeypad(root, id, onChange){
+  const valEl = root.querySelector(`#${id}-display .val`);
+  let raw = valEl.dataset.raw || '';
+  const render = () => {
+    valEl.textContent = raw || '0';
+    onChange(Number(raw.replace(',', '.')) || 0);
+  };
+  $$(`#${id}-grid button`, root).forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.k;
+      if (k === '⌫'){ raw = raw.slice(0, -1); }
+      else if (k === ','){ if (raw === '') raw = '0,'; else if (!raw.includes(',')) raw += ','; }
+      else {
+        if (raw.includes(',') && raw.split(',')[1].length >= 2) return;
+        raw = (raw === '0' || raw === '') ? k : raw + k;
+        if (raw.replace(',', '').length > 10) return;
+      }
+      render();
+    };
+  });
+  render();
+  return { getValue: () => Number(raw.replace(',', '.')) || 0 };
+}
 
 /* ---------- Cargar cache global ---------- */
 
@@ -274,7 +322,6 @@ async function render(){
   else if (state.view === 'plan')root.appendChild(await viewPlan());
   else if (state.view === 'gastos') root.appendChild(await viewGastos());
   else if (state.view === 'insights') root.appendChild(await viewInsights());
-  else if (state.view === 'ahorro')   root.appendChild(await viewAhorro());
 }
 
 /* ==============================================================
@@ -283,13 +330,43 @@ async function render(){
 
 /* ---------- HOY ---------- */
 
+function viewOnboarding(){
+  const el = document.createElement('div');
+  el.className = 'view onboard';
+  el.innerHTML = `
+    <div class="oemoji">🌱</div>
+    <h2>¿Cuánto ganás<br>este mes?</h2>
+    <p>Con esto armamos tu plan: cuánto destinás a ahorro,<br>inversión y cuánto te queda para gastar.</p>
+    ${keypadHtml('ob-kp', state.currency, '')}
+    <button class="ob-cta" id="ob-cta">Empezar</button>
+    <button class="ob-skip" id="ob-skip">Prefiero configurarlo después</button>
+  `;
+  const kp = wireKeypad(el, 'ob-kp', () => {});
+  el.querySelector('#ob-cta').onclick = async () => {
+    const sal = kp.getValue();
+    if (!sal || sal <= 0){ toast('Ingresá un monto'); return; }
+    await DB.put('planes', { mes: state.mes, salario: sal, pctAhorro: 20, pctInversion: 10, limites: {} });
+    toast('¡Listo! Ya podés registrar gastos');
+    render();
+  };
+  el.querySelector('#ob-skip').onclick = () => {
+    state.onboardDismissed = true;
+    render();
+  };
+  return el;
+}
+
 async function viewHoy(){
+  const plan = state.planActual;
+  if (!plan.salario && !state.onboardDismissed){
+    return viewOnboarding();
+  }
+
   const el = document.createElement('div');
   el.className = 'view';
   const mes = state.mes;
   const gastos = await gastosDelMes(mes);
   const movs = await movimientosDelMes(mes);
-  const plan = state.planActual;
 
   const totalGastado = gastos.reduce((s,g) => s + g.monto, 0);
   const totalAhorrado = movs.filter(m => m.tipo === 'ahorro').reduce((s,m) => s + m.monto, 0);
@@ -345,7 +422,7 @@ async function viewHoy(){
     <section class="alerts">
       <div class="alert-head ${alerts.some(a => a.status==='over') ? 'over' : ''}">${alerts.some(a => a.status==='over') ? 'Te pasaste en' : 'Ojo con'}</div>
       ${alerts.map(a => `<div class="alert-row ${a.status}">
-        <span class="cd" style="background:${a.cat.color}"></span>
+        ${catBadge(a.cat, 'sm')}
         <span>${esc(a.cat.nombre)}</span>
         <span class="pct">${Math.round(a.usage*100)}%</span>
       </div>`).join('')}
@@ -359,7 +436,7 @@ async function viewHoy(){
     ${topCats.length > 0 ? `
     <div class="quick-actions-label">De una</div>
     <div class="quick-actions">
-      ${topCats.map(c => `<button class="qchip" data-quickcat="${c.id}"><span class="cd" style="background:${c.color}"></span>${esc(c.nombre)}<span class="plus">+</span></button>`).join('')}
+      ${topCats.map(c => `<button class="qchip" data-quickcat="${c.id}">${catBadge(c, 'sm')}${esc(c.nombre)}<span class="plus">+</span></button>`).join('')}
     </div>` : ''}
 
     <div class="section-head">
@@ -367,13 +444,12 @@ async function viewHoy(){
       <a class="link" href="#gastos" data-nav="gastos">Ver todo</a>
     </div>
     <div class="recent">
-      ${gastos.length === 0 ? '<div class="empty">Todavía no cargaste ningún gasto este mes.</div>' :
+      ${gastos.length === 0 ? '<div class="empty">Todavía no cargaste ningún gasto este mes.<button class="empty-cta" data-open="add-gasto">+ Registrar el primero</button></div>' :
         gastos.slice(0, 6).map(g => {
           const c = state.catsById[g.categoriaId];
-          const color = c?.color || '#6B7075';
           return `<div class="recent-row">
             <div class="rl">
-              <span class="dot" style="background:${color}"></span>
+              ${catBadge(c, 'sm')}
               <span class="cat">${esc(c?.nombre || 'Sin categoría')}</span>
               ${g.nota ? `<span class="note">· ${esc(g.nota)}</span>` : ''}
             </div>
@@ -407,6 +483,7 @@ async function viewPlan(){
 
   const disponible = plan.salario - plan.salario * (plan.pctAhorro/100) - plan.salario * (plan.pctInversion/100);
   const gastosMes = await gastosDelMes(mes);
+  const hasLimits = plan.limites && Object.keys(plan.limites).length > 0;
 
   el.innerHTML = `
     <div class="hoy-head" style="padding-top:6px;">
@@ -453,14 +530,18 @@ async function viewPlan(){
 
     <div class="section-head">
       <h3>Límites por categoría</h3>
-      <button class="link" data-open="cats">Editar categorías</button>
+      <button class="link" data-open="cats" id="pl-editcats" style="${hasLimits ? '' : 'display:none;'}">Editar categorías</button>
     </div>
-    <div id="plan-limits">
+    <div class="limits-toggle-row">
+      <span class="txt">Poner tope de gasto por categoría (opcional)</span>
+      <button class="toggle ${hasLimits ? 'on' : ''}" id="pl-limits-toggle" aria-label="Activar límites por categoría"></button>
+    </div>
+    <div id="plan-limits" style="${hasLimits ? '' : 'display:none;'}">
       ${state.cats.map(c => {
         const pct = plan.limites?.[c.id] ?? '';
         const st = catStatus(c.id, gastosMes, plan);
         return `<div class="cat-limit ${st === 'over' ? 'over' : (st === 'warn' ? 'warn' : '')}">
-          <span class="cdot" style="background:${c.color}"></span>
+          ${catBadge(c)}
           <span class="cname">${esc(c.nombre)}</span>
           <span class="cright">
             <input type="number" inputmode="decimal" min="0" max="100" data-lim="${c.id}" value="${pct}" placeholder="—" />
@@ -490,6 +571,16 @@ async function viewPlan(){
     $('#pl-disp', el).innerHTML = money(sal - sal*pa/100 - sal*pi/100);
   };
   ['pl-salario','pl-ahorro','pl-inv'].forEach(id => $('#'+id, el).addEventListener('input', upd));
+
+  const limitsToggle = $('#pl-limits-toggle', el);
+  const limitsBlock = $('#plan-limits', el);
+  const editCatsLink = $('#pl-editcats', el);
+  limitsToggle.onclick = () => {
+    const on = !limitsToggle.classList.contains('on');
+    limitsToggle.classList.toggle('on', on);
+    limitsBlock.style.display = on ? '' : 'none';
+    editCatsLink.style.display = on ? '' : 'none';
+  };
 
   el.querySelector('#pl-save').onclick = async () => {
     const sal = Number($('#pl-salario', el).value) || 0;
@@ -555,10 +646,10 @@ async function viewGastos(){
 
     <div class="filters">
       <button class="fchip ${!state.filterCat ? 'on':''}" data-fcat="0">Todas</button>
-      ${state.cats.map(c => `<button class="fchip ${state.filterCat===c.id?'on':''}" data-fcat="${c.id}"><span class="cd" style="background:${c.color}"></span>${esc(c.nombre)}</button>`).join('')}
+      ${state.cats.map(c => `<button class="fchip ${state.filterCat===c.id?'on':''}" data-fcat="${c.id}">${catBadge(c, 'sm')}${esc(c.nombre)}</button>`).join('')}
     </div>
 
-    ${filtered.length === 0 ? `<div class="empty">${q ? 'Nada coincide con esa búsqueda.' : 'No hay gastos para mostrar.'}</div>` :
+    ${filtered.length === 0 ? `<div class="empty">${q ? 'Nada coincide con esa búsqueda.' : 'No hay gastos para mostrar.'}${q ? '' : '<button class="empty-cta" data-open="add-gasto">+ Registrar el primero</button>'}</div>` :
       Object.keys(groups).sort((a,b) => b.localeCompare(a)).map(fecha => {
         const dt = parseISO(fecha);
         const label = dt.toLocaleDateString(state.locale, { weekday: 'long', day: 'numeric', month: 'long' });
@@ -568,7 +659,7 @@ async function viewGastos(){
           ${groups[fecha].map(g => {
             const c = state.catsById[g.categoriaId];
             return `<div class="gasto-row">
-              <span class="cd" style="background:${c?.color || '#6B7075'}"></span>
+              ${catBadge(c)}
               <button class="col-btn" data-edit="${g.id}">
                 <div class="cat">${esc(c?.nombre || 'Sin categoría')}</div>
                 ${g.nota ? `<div class="note">${esc(g.nota)}</div>` : ''}
@@ -649,37 +740,15 @@ async function startInlineEditMonto(gastoId, btnEl){
 async function viewInsights(){
   const el = document.createElement('div');
   el.className = 'view';
-  const gastos = await gastosDelMes(state.mes);
-  const total = gastos.reduce((s,g) => s + g.monto, 0);
-
-  // Por categoría
-  const byCat = {};
-  gastos.forEach(g => { byCat[g.categoriaId] = (byCat[g.categoriaId] || 0) + g.monto; });
-  const catData = state.cats
-    .map(c => ({ ...c, monto: byCat[c.id] || 0, pct: total > 0 ? (byCat[c.id] || 0)/total : 0 }))
-    .filter(c => c.monto > 0)
-    .sort((a,b) => b.monto - a.monto);
-
-  // Por día (barras)
-  const dim = daysInMonth(state.mes);
-  const perDay = new Array(dim).fill(0);
-  gastos.forEach(g => { const d = parseISO(g.fecha).getDate(); perDay[d-1] += g.monto; });
-
-  // Comparativa últimos 6 meses
-  const history = [];
-  for (let i = 5; i >= 0; i--){
-    const m = shiftMonth(state.mes, -i);
-    const gs = await gastosDelMes(m);
-    history.push({ mes: m, total: gs.reduce((s,g) => s + g.monto, 0) });
-  }
+  const tab = state.insightsTab;
 
   el.innerHTML = `
     <div class="hoy-head" style="padding-top:6px;">
       <div>
         <div class="eyebrow">Insights</div>
-        <div class="hoy-date">Comportamiento de tus gastos</div>
+        <div class="hoy-date">${tab === 'ahorro' ? 'Acumulado histórico' : 'Comportamiento de tus gastos'}</div>
       </div>
-      <button class="hoy-cog" aria-label="Ajustes" data-open="settings">⚙</button>
+      <button class="hoy-cog" aria-label="${tab === 'ahorro' ? 'Agregar' : 'Ajustes'}" data-open="${tab === 'ahorro' ? 'add-mov' : 'settings'}">${tab === 'ahorro' ? '+' : '⚙'}</button>
     </div>
 
     <div class="month-nav" style="margin-top:14px;">
@@ -688,7 +757,50 @@ async function viewInsights(){
       <button class="arr" data-mes-next>›</button>
     </div>
 
-    <section class="insights-tot">
+    <div class="subtabs">
+      <button class="${tab==='gastos'?'on':''}" data-itab="gastos">Gastos</button>
+      <button class="${tab==='ahorro'?'on':''}" data-itab="ahorro">Ahorro</button>
+    </div>
+
+    <div id="insights-body"></div>
+  `;
+
+  el.querySelector('[data-mes-prev]').onclick = () => { state.mes = shiftMonth(state.mes, -1); render(); };
+  el.querySelector('[data-mes-next]').onclick = () => { state.mes = shiftMonth(state.mes, 1); render(); };
+  $$('[data-itab]', el).forEach(b => b.onclick = () => { state.insightsTab = b.dataset.itab; render(); });
+
+  const body = $('#insights-body', el);
+  if (tab === 'ahorro') body.appendChild(await insightsAhorroBlock());
+  else body.appendChild(await insightsGastosBlock());
+
+  return el;
+}
+
+async function insightsGastosBlock(){
+  const el = document.createElement('div');
+  const gastos = await gastosDelMes(state.mes);
+  const total = gastos.reduce((s,g) => s + g.monto, 0);
+
+  const byCat = {};
+  gastos.forEach(g => { byCat[g.categoriaId] = (byCat[g.categoriaId] || 0) + g.monto; });
+  const catData = state.cats
+    .map(c => ({ ...c, monto: byCat[c.id] || 0, pct: total > 0 ? (byCat[c.id] || 0)/total : 0 }))
+    .filter(c => c.monto > 0)
+    .sort((a,b) => b.monto - a.monto);
+
+  const dim = daysInMonth(state.mes);
+  const perDay = new Array(dim).fill(0);
+  gastos.forEach(g => { const d = parseISO(g.fecha).getDate(); perDay[d-1] += g.monto; });
+
+  const history = [];
+  for (let i = 5; i >= 0; i--){
+    const m = shiftMonth(state.mes, -i);
+    const gs = await gastosDelMes(m);
+    history.push({ mes: m, total: gs.reduce((s,g) => s + g.monto, 0) });
+  }
+
+  el.innerHTML = `
+    <section class="insights-tot" style="margin-top:18px;">
       <div class="eyebrow">Total gastado</div>
       <div class="display">${money(total, true)}</div>
       ${(() => {
@@ -713,7 +825,7 @@ async function viewInsights(){
       <div class="legend">
         ${catData.length === 0 ? '<div class="empty">Sin datos.</div>' :
           catData.map(c => `<div class="lr">
-            <span class="cd" style="background:${c.color}"></span>
+            ${catBadge(c, 'sm')}
             <span>${esc(c.nombre)}</span>
             <span class="pct">${Math.round(c.pct*100)}%</span>
             <span class="amt">${money(c.monto)}</span>
@@ -732,9 +844,6 @@ async function viewInsights(){
     </section>
   `;
 
-  el.querySelector('[data-mes-prev]').onclick = () => { state.mes = shiftMonth(state.mes, -1); render(); };
-  el.querySelector('[data-mes-next]').onclick = () => { state.mes = shiftMonth(state.mes, 1); render(); };
-
   requestAnimationFrame(() => {
     drawDonut($('#ch-donut', el), catData);
     drawBars($('#ch-bars', el), perDay, dim);
@@ -744,11 +853,8 @@ async function viewInsights(){
   return el;
 }
 
-/* ---------- AHORRO ---------- */
-
-async function viewAhorro(){
+async function insightsAhorroBlock(){
   const el = document.createElement('div');
-  el.className = 'view';
   const plan = state.planActual;
   const movs = await movimientosDelMes(state.mes);
 
@@ -757,22 +863,13 @@ async function viewAhorro(){
   const metaAh    = plan.salario * (plan.pctAhorro/100);
   const metaInv   = plan.salario * (plan.pctInversion/100);
 
-  // acumulado histórico
   const allMovs = await DB.getAll('movimientos');
   const totAh = allMovs.filter(m => m.tipo === 'ahorro').reduce((s,m) => s + m.monto, 0);
   const totInv = allMovs.filter(m => m.tipo === 'inversion').reduce((s,m) => s + m.monto, 0);
   const totAcum = totAh + totInv;
 
   el.innerHTML = `
-    <div class="hoy-head" style="padding-top:6px;">
-      <div>
-        <div class="eyebrow">Ahorro & Inversión</div>
-        <div class="hoy-date">acumulado histórico</div>
-      </div>
-      <button class="hoy-cog" aria-label="Agregar" data-open="add-mov">+</button>
-    </div>
-
-    <section class="ah-hero">
+    <section class="ah-hero" style="margin-top:18px;">
       <div class="eyebrow">Total acumulado</div>
       <div class="display">${money(totAcum, true)}</div>
       <div class="meta">
@@ -799,7 +896,7 @@ async function viewAhorro(){
     <div class="section-head">
       <h3>Movimientos del mes</h3>
     </div>
-    ${movs.length === 0 ? '<div class="empty">Sin movimientos este mes.</div>' :
+    ${movs.length === 0 ? '<div class="empty">Sin movimientos este mes.<button class="empty-cta" data-open="add-mov">+ Primer aporte</button></div>' :
       movs.map(m => `<button class="mov-row" data-mov="${m.id}" style="width:100%; text-align:left;">
         <span class="cd" style="background:${m.tipo === 'ahorro' ? 'var(--teal)' : 'var(--navy)'}"></span>
         <span>
@@ -843,17 +940,13 @@ async function openAddGasto(editId, preselectCatId){
     if (existing) g = existing;
   }
   const body = `
-    <div class="form-row">
-      <div class="k">Monto</div>
-      <div class="v money-input">
-        <span class="cur">${state.currency}</span>
-        <input type="number" inputmode="decimal" step="0.01" min="0" id="ag-monto" value="${g.monto || ''}" placeholder="0" autofocus />
-      </div>
+    <div class="form-row" style="border-bottom:0;">
+      ${keypadHtml('ag-kp', state.currency, g.monto)}
     </div>
     <div class="form-row">
       <div class="k">Categoría</div>
       <div class="cat-picker" id="ag-cats">
-        ${state.cats.map(c => `<button class="cchip ${c.id === g.categoriaId ? 'on':''}" data-catid="${c.id}"><span class="cd" style="background:${c.color}"></span>${esc(c.nombre)}</button>`).join('')}
+        ${state.cats.map(c => `<button class="cchip ${c.id === g.categoriaId ? 'on':''}" data-catid="${c.id}">${catBadge(c, 'sm')}${esc(c.nombre)}</button>`).join('')}
       </div>
     </div>
     <div class="form-row">
@@ -875,9 +968,9 @@ async function openAddGasto(editId, preselectCatId){
       selCat = Number(b.dataset.catid);
       $$('[data-catid]', root).forEach(x => x.classList.toggle('on', Number(x.dataset.catid) === selCat));
     });
-    $('#ag-monto', root).focus();
+    const kp = wireKeypad(root, 'ag-kp', () => {});
     $('#ag-save', root).onclick = async () => {
-      const monto = Number($('#ag-monto', root).value);
+      const monto = kp.getValue();
       const fecha = $('#ag-fecha', root).value;
       const nota = $('#ag-nota', root).value.trim();
       if (!monto || monto <= 0){ toast('Ingresá un monto'); return; }
@@ -916,12 +1009,8 @@ async function openAddMov(editId){
         <button data-t="inversion" class="${m.tipo==='inversion'?'on':''}">Inversión</button>
       </div>
     </div>
-    <div class="form-row">
-      <div class="k">Monto</div>
-      <div class="v money-input">
-        <span class="cur">${state.currency}</span>
-        <input type="number" inputmode="decimal" step="0.01" min="0" id="mv-monto" value="${m.monto || ''}" placeholder="0" />
-      </div>
+    <div class="form-row" style="border-bottom:0;">
+      ${keypadHtml('mv-kp', state.currency, m.monto)}
     </div>
     <div class="form-row">
       <div class="k">Instrumento (opcional)</div>
@@ -942,9 +1031,9 @@ async function openAddMov(editId){
       tipo = b.dataset.t;
       $$('#mv-type button', root).forEach(x => x.classList.toggle('on', x.dataset.t === tipo));
     });
-    $('#mv-monto', root).focus();
+    const kp = wireKeypad(root, 'mv-kp', () => {});
     $('#mv-save', root).onclick = async () => {
-      const monto = Number($('#mv-monto', root).value);
+      const monto = kp.getValue();
       const fecha = $('#mv-fecha', root).value;
       const instrumento = $('#mv-inst', root).value.trim();
       if (!monto || monto <= 0){ toast('Ingresá un monto'); return; }
@@ -971,6 +1060,7 @@ async function openCatsEditor(){
   const rows = state.cats.map(c => `
     <div class="row" data-cid="${c.id}">
       <input type="color" value="${c.color}" data-k="color" />
+      <input type="text" class="icon-in" value="${esc(c.icono || '')}" maxlength="2" data-k="icono" placeholder="🔖" />
       <input type="text" value="${esc(c.nombre)}" data-k="nombre" />
       <button class="rem" data-del="${c.id}" aria-label="Eliminar">×</button>
     </div>
@@ -989,7 +1079,8 @@ async function openCatsEditor(){
       div.className = 'row';
       div.dataset.cid = 'new';
       div.innerHTML = `
-        <input type="color" value="#8E9BAA" data-k="color" />
+        <input type="color" value="#9AA89C" data-k="color" />
+        <input type="text" class="icon-in" maxlength="2" data-k="icono" placeholder="🔖" />
         <input type="text" placeholder="Nueva categoría" data-k="nombre" />
         <button class="rem" data-del="new" aria-label="Eliminar">×</button>
       `;
@@ -1006,14 +1097,15 @@ async function openCatsEditor(){
       for (const r of rows){
         const nombre = r.querySelector('[data-k="nombre"]').value.trim();
         const color  = r.querySelector('[data-k="color"]').value;
+        const icono  = r.querySelector('[data-k="icono"]').value.trim() || '🔖';
         if (!nombre) continue;
         const cid = r.dataset.cid;
         if (cid === 'new'){
-          await DB.add('categorias', { nombre, color, orden });
+          await DB.add('categorias', { nombre, color, icono, orden });
         } else {
           const id = Number(cid);
           existingIds.add(id);
-          await DB.put('categorias', { id, nombre, color, orden });
+          await DB.put('categorias', { id, nombre, color, icono, orden });
         }
         orden++;
       }
@@ -1120,7 +1212,7 @@ async function openRecurrentes(){
         list.map(r => {
           const c = state.catsById[r.categoriaId];
           return `<div class="rec-row" data-rec="${r.id}">
-            <span class="cd" style="background:${c?.color || '#6B7075'}"></span>
+            ${catBadge(c, 'sm')}
             <span class="nm">${esc(r.nombre)} <span style="color:var(--ink-50); font-size:12px;">· día ${r.dia}</span></span>
             <span class="amt">${money(r.monto)}</span>
             <button class="rem" data-del="${r.id}" aria-label="Eliminar">×</button>
@@ -1169,7 +1261,7 @@ async function openRecEditor(id){
     <div class="form-row"><div class="k">Nombre</div><div class="v"><input type="text" id="re-nom" value="${esc(r.nombre)}" placeholder="Alquiler, Netflix…" /></div></div>
     <div class="form-row"><div class="k">Monto</div><div class="v money-input"><span class="cur">${state.currency}</span><input type="number" inputmode="decimal" step="0.01" min="0" id="re-monto" value="${r.monto || ''}" /></div></div>
     <div class="form-row"><div class="k">Categoría</div>
-      <div class="cat-picker" id="re-cats">${state.cats.map(c => `<button class="cchip ${c.id === r.categoriaId?'on':''}" data-catid="${c.id}"><span class="cd" style="background:${c.color}"></span>${esc(c.nombre)}</button>`).join('')}</div>
+      <div class="cat-picker" id="re-cats">${state.cats.map(c => `<button class="cchip ${c.id === r.categoriaId?'on':''}" data-catid="${c.id}">${catBadge(c, 'sm')}${esc(c.nombre)}</button>`).join('')}</div>
     </div>
     <div class="form-row"><div class="k">Día del mes</div><div class="v"><input type="number" min="1" max="31" id="re-dia" value="${r.dia}" /></div></div>
     <div class="sheet-cta">
@@ -1265,7 +1357,7 @@ function drawDonut(canvas, data){
   const ir = r * 0.62;
   const total = data.reduce((s,d) => s + d.monto, 0);
   if (total === 0){
-    ctx.fillStyle = '#15346266';
+    ctx.fillStyle = '#17332A66';
     ctx.font = 'italic 16px Georgia, serif';
     ctx.textAlign = 'center';
     ctx.fillText('Sin datos', cx, cy);
@@ -1285,7 +1377,7 @@ function drawDonut(canvas, data){
     a = b;
   });
   // etiqueta central: total
-  ctx.fillStyle = '#153462';
+  ctx.fillStyle = '#17332A';
   ctx.textAlign = 'center';
   ctx.font = '500 10px system-ui';
   ctx.fillText('TOTAL', cx, cy - 10);
@@ -1306,7 +1398,7 @@ function drawBars(canvas, values, dim){
   const todayD = (monthKey(today) === state.mes) ? today.getDate() : -1;
 
   // baseline
-  ctx.strokeStyle = '#15346229'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#17332A29'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(padL, padT + ch); ctx.lineTo(padL + cw, padT + ch); ctx.stroke();
 
   for (let i = 0; i < dim; i++){
@@ -1314,11 +1406,11 @@ function drawBars(canvas, values, dim){
     const barH = (v / max) * ch;
     const x = padL + i * bw + 1;
     const y = padT + ch - barH;
-    ctx.fillStyle = (i+1) === todayD ? '#153462' : (v > 0 ? '#4FA095' : '#BAD1C2');
+    ctx.fillStyle = (i+1) === todayD ? '#17332A' : (v > 0 ? '#4FA095' : '#BAD1C2');
     ctx.fillRect(x, y, Math.max(1, bw - 2), Math.max(barH, v > 0 ? 2 : 0));
   }
   // etiquetas: día 1, 10, 20, último
-  ctx.fillStyle = '#15346266';
+  ctx.fillStyle = '#17332A66';
   ctx.font = '500 10px system-ui';
   ctx.textAlign = 'center';
   [1, 10, 20, dim].forEach(d => {
@@ -1338,7 +1430,7 @@ function drawHist(canvas, hist){
   const bw = cw / n;
 
   // baseline
-  ctx.strokeStyle = '#15346229'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#17332A29'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(padL, padT + ch); ctx.lineTo(padL + cw, padT + ch); ctx.stroke();
 
   hist.forEach((d, i) => {
@@ -1346,11 +1438,11 @@ function drawHist(canvas, hist){
     const x = padL + i * bw + bw*0.15;
     const y = padT + ch - barH;
     const isCur = d.mes === state.mes;
-    ctx.fillStyle = isCur ? '#153462' : '#BAD1C2';
+    ctx.fillStyle = isCur ? '#17332A' : '#BAD1C2';
     ctx.fillRect(x, y, bw*0.7, Math.max(barH, 2));
 
     // label mes
-    ctx.fillStyle = isCur ? '#153462' : '#15346266';
+    ctx.fillStyle = isCur ? '#17332A' : '#17332A66';
     ctx.font = '500 10px system-ui';
     ctx.textAlign = 'center';
     ctx.fillText(monthShort(d.mes).replace('.', ''), x + bw*0.35, h - 14);
@@ -1358,7 +1450,7 @@ function drawHist(canvas, hist){
     // valor
     if (d.total > 0){
       ctx.font = '500 10px ui-monospace, Menlo, monospace';
-      ctx.fillStyle = isCur ? '#153462' : '#15346266';
+      ctx.fillStyle = isCur ? '#17332A' : '#17332A66';
       ctx.fillText(formatMoney(d.total, { showDec: false }), x + bw*0.35, y - 6);
     }
   });

@@ -1,24 +1,24 @@
 /* ============================================================
    GASTITOS — sistema de diseño editorial
-   Paleta: F6F6C9 crema · BAD1C2 menta · 4FA095 teal · 153462 navy
+   Paleta: F4F7F2 sage-white · BAD1C2 menta · 4FA095 teal · 17332A forest
    ============================================================ */
 
 :root{
-  --cream:      #F6F6C9;
-  --cream-2:    #EFEFB8;
+  --cream:      #F4F7F2;
+  --cream-2:    #E7EFE4;
   --mint:       #BAD1C2;
-  --mint-2:     #A8C4B4;
+  --mint-2:     #9FBFAE;
   --teal:       #4FA095;
-  --teal-2:     #3E8A7F;
-  --navy:       #153462;
-  --navy-soft:  #2A4677;
-  --ink:        #153462;
-  --ink-50:     #153462AA;
-  --ink-30:     #15346266;
-  --ink-15:     #15346229;
-  --ink-08:     #15346214;
+  --teal-2:     #357467;
+  --navy:       #17332A;
+  --navy-soft:  #2A4D3D;
+  --ink:        #17332A;
+  --ink-50:     #17332AAA;
+  --ink-30:     #17332A66;
+  --ink-15:     #17332A29;
+  --ink-08:     #17332A14;
   --danger:     #C0392B;
-  --warn:       #D68A2A;
+  --warn:       #A9752B;
 
   --serif: 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Times New Roman', serif;
   --sans:  -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -327,7 +327,7 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
 /* Manage categorías */
 .cats-editor{ margin-top: 6px; }
 .cats-editor .row{
-  display: grid; grid-template-columns: 22px 1fr auto; gap: 10px;
+  display: grid; grid-template-columns: 22px 30px 1fr auto; gap: 10px;
   align-items: center;
   padding: 10px 0; border-bottom: 1px solid var(--ink-08);
 }
@@ -339,6 +339,9 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
 .cats-editor .row input[type="color"]::-moz-color-swatch{ border: 0; border-radius: 50%; }
 .cats-editor .row input[type="text"]{
   font-size: 15px; padding: 4px 0; border-bottom: 1px dashed transparent;
+}
+.cats-editor .row input.icon-in{
+  font-size: 17px; text-align: center; padding: 4px 0;
 }
 .cats-editor .row input[type="text"]:focus{ border-bottom-color: var(--teal); }
 .cats-editor .row .rem{
@@ -720,7 +723,7 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
 .alerts .alert-head.over{ color: var(--danger); }
 .alert-row{
   display: grid;
-  grid-template-columns: 10px 1fr auto;
+  grid-template-columns: 26px 1fr auto;
   gap: 12px;
   align-items: center;
   padding: 8px 0;
@@ -876,3 +879,144 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ============================================================
+   FEATURES v3 — íconos, teclado numérico, onboarding, opt-in límites
+   ============================================================ */
+
+/* Badge de categoría (ícono + tinte de color) */
+.cicon{
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  font-size: 14px; line-height: 1;
+  flex: none;
+}
+.cicon.sm{ width: 20px; height: 20px; font-size: 11px; }
+
+/* Ajuste de columnas para acomodar el badge más grande */
+.gasto-row{ grid-template-columns: 32px 1fr auto; }
+.cat-limit{ grid-template-columns: 32px 1fr auto; }
+.legend .lr{ grid-template-columns: 26px 1fr auto auto; }
+.rec-row{ grid-template-columns: 26px 1fr auto auto; }
+
+/* Teclado numérico */
+.keypad-display{
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 6px 0 10px;
+  border-bottom: 1px dashed var(--ink-15);
+}
+.keypad-display .cur{ color: var(--ink-50); font-size: 20px; }
+.keypad-display .val{
+  font-family: var(--serif);
+  font-size: 44px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.keypad-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+.keypad-grid button{
+  padding: 16px 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 19px;
+  background: var(--cream-2);
+  border-radius: 12px;
+  transition: transform .08s ease, background .1s ease;
+}
+.keypad-grid button:active{ background: var(--mint); transform: scale(.96); }
+.keypad-grid button.op{ background: transparent; color: var(--ink-50); font-size: 20px; }
+
+/* Onboarding primer uso */
+.onboard{
+  padding-top: 40px;
+  text-align: center;
+}
+.onboard .oemoji{ font-size: 40px; }
+.onboard h2{
+  font: italic 400 26px/1.2 var(--serif);
+  margin: 16px 0 6px;
+  text-wrap: balance;
+}
+.onboard p{
+  color: var(--ink-50);
+  font-size: 14px;
+  margin: 0 0 26px;
+  line-height: 1.5;
+}
+.onboard .keypad-display{ justify-content: center; border-bottom: 0; padding-bottom: 0; }
+.onboard .keypad-grid{ max-width: 320px; margin-left: auto; margin-right: auto; }
+.onboard .ob-cta{
+  margin-top: 24px;
+  width: 100%;
+  max-width: 320px;
+  padding: 16px;
+  border-radius: 999px;
+  background: var(--navy);
+  color: var(--cream);
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 17px;
+}
+.onboard .ob-skip{
+  display: block;
+  margin: 14px auto 0;
+  font-size: 12px;
+  color: var(--ink-50);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Opt-in de límites por categoría */
+.limits-toggle-row{
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 0 6px;
+}
+.limits-toggle-row .txt{ font-size: 13px; color: var(--ink-50); }
+.limits-toggle-row .toggle{
+  width: 42px; height: 24px; border-radius: 999px;
+  background: var(--ink-15); position: relative;
+  flex: none;
+}
+.limits-toggle-row .toggle::after{
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--cream);
+  transition: transform .2s ease;
+}
+.limits-toggle-row .toggle.on{ background: var(--teal); }
+.limits-toggle-row .toggle.on::after{ transform: translateX(18px); }
+
+/* Empty state con acción */
+.empty-cta{
+  margin: 10px auto 0;
+  display: block;
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: var(--navy);
+  color: var(--cream);
+  font-size: 13px;
+}
+
+/* Sub-tabs dentro de Insights (Gastos / Ahorro) */
+.subtabs{
+  display: flex;
+  gap: 6px;
+  padding: 3px;
+  background: var(--ink-08);
+  border-radius: 999px;
+  margin-top: 16px;
+}
+.subtabs button{
+  flex: 1;
+  padding: 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: .04em;
+  color: var(--ink-50);
+}
+.subtabs button.on{ background: var(--cream); color: var(--ink); font-weight: 600; }
