@@ -802,6 +802,13 @@ async function insightsGastosBlock(){
   const perDay = new Array(dim).fill(0);
   gastos.forEach(g => { const d = parseISO(g.fecha).getDate(); perDay[d-1] += g.monto; });
 
+  // Rango dinámico para "Ritmo diario": si el mes está en curso, solo hasta hoy
+  // (los días futuros todavía no pasaron, no tiene sentido dejarles un hueco vacío).
+  // Si es un mes ya cerrado, se muestran todos sus días.
+  const isCurrentMonth = state.mes === monthKey(new Date());
+  const renderDim = isCurrentMonth ? Math.min(dim, new Date().getDate()) : dim;
+  const perDayRender = perDay.slice(0, renderDim);
+
   const history = [];
   for (let i = 5; i >= 0; i--){
     const m = shiftMonth(state.mes, -i);
@@ -851,21 +858,30 @@ async function insightsGastosBlock(){
 
   requestAnimationFrame(() => {
     const barsCanvas = $('#ch-bars', el);
-    const geo = drawBars(barsCanvas, perDay, dim);
+    let selectedIdx = -1;
+    let geo = drawBars(barsCanvas, perDayRender, renderDim, { selectedIdx });
     drawHist($('#ch-hist', el), history);
 
-    // Click sobre una barra del ritmo diario: muestra el gasto de ese día,
-    // sin afectar ningún otro filtro de la app.
+    // Click sobre una barra del ritmo diario: resalta esa barra (el resto se
+    // atenúa) y muestra el gasto de ese día. Filtro local a este gráfico,
+    // no afecta ningún otro dato ni vista de la app. Click de nuevo = deselecciona.
     const info = $('#daybar-info', el);
     barsCanvas.onclick = (e) => {
       const rect = barsCanvas.getBoundingClientRect();
       const xCss = e.clientX - rect.left;
       const idx = Math.min(geo.dim - 1, Math.max(0, Math.floor((xCss - geo.padL) / geo.bw)));
-      const day = idx + 1;
-      const val = perDay[idx];
-      const fecha = `${state.mes}-${String(day).padStart(2,'0')}`;
-      const label = parseISO(fecha).toLocaleDateString(state.locale, { weekday: 'long', day: 'numeric', month: 'long' });
-      info.innerHTML = `<span class="d">${esc(label)}</span><span class="v">${money(val)}</span>`;
+      if (selectedIdx === idx){
+        selectedIdx = -1;
+        info.innerHTML = `<span class="hint">Tocá un día para ver el detalle</span>`;
+      } else {
+        selectedIdx = idx;
+        const day = idx + 1;
+        const val = perDayRender[idx];
+        const fecha = `${state.mes}-${String(day).padStart(2,'0')}`;
+        const label = parseISO(fecha).toLocaleDateString(state.locale, { weekday: 'long', day: 'numeric', month: 'long' });
+        info.innerHTML = `<span class="d">${esc(label)}</span><span class="v">${money(val)}</span>`;
+      }
+      geo = drawBars(barsCanvas, perDayRender, renderDim, { selectedIdx });
     };
   });
 
@@ -892,6 +908,30 @@ function catBarItemHtml(c, maxMonto){
   `;
 }
 
+// Barra horizontal de Ahorro/Inversión con línea de objetivo (meta del mes).
+// Si "actual" supera "meta", la barra queda más larga que la línea — está bien,
+// la línea se lee dentro del relleno como "acá era el objetivo".
+function goalBarHtml({ label, icon, actual, meta, maxScale, colorClass }){
+  const fillPct = maxScale > 0 ? Math.min(100, (actual / maxScale) * 100) : 0;
+  const goalPct = meta > 0 ? Math.min(100, (meta / maxScale) * 100) : null;
+  const reached = meta > 0 && actual >= meta;
+  return `
+    <div class="goal-row">
+      <div class="goal-icon">${icon}</div>
+      <div class="goal-body">
+        <div class="goal-head">
+          <span class="goal-label">${esc(label)}</span>
+          <span class="goal-val">${money(actual)}${meta > 0 ? ` <span class="of">/ ${money(meta)}</span>` : ''}${reached ? ' <span class="ok">✓</span>' : ''}</span>
+        </div>
+        <div class="goal-track">
+          <div class="goal-fill ${colorClass}" style="width:${fillPct}%"></div>
+          ${goalPct !== null ? `<div class="goal-line" style="left:${goalPct}%" title="Objetivo: ${money(meta)}"></div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 async function insightsAhorroBlock(){
   const el = document.createElement('div');
   const plan = state.planActual;
@@ -906,6 +946,12 @@ async function insightsAhorroBlock(){
   const totAh = allMovs.filter(m => m.tipo === 'ahorro').reduce((s,m) => s + m.monto, 0);
   const totInv = allMovs.filter(m => m.tipo === 'inversion').reduce((s,m) => s + m.monto, 0);
   const totAcum = totAh + totInv;
+
+  // Escala común para ambas barras, para que Ahorro e Inversión sean comparables
+  // entre sí. 1.15x del mayor valor en juego, para dejarle aire a la línea objetivo
+  // (y a la propia barra, si se superó la meta).
+  const scaleBase = Math.max(metaAh, metaInv, ahorroMes, invMes, 1);
+  const maxScale = scaleBase * 1.15;
 
   el.innerHTML = `
     <section class="ah-hero" style="margin-top:18px;">
@@ -922,14 +968,8 @@ async function insightsAhorroBlock(){
       <button class="link" data-open="add-mov">+ Aporte</button>
     </div>
     <div class="ah-goals">
-      <div class="goal">
-        <div class="gh"><span>Ahorro</span><span class="type">${money(ahorroMes)} / ${money(metaAh)}</span></div>
-        <div class="bar"><div class="f" style="width:${metaAh > 0 ? Math.min(100, ahorroMes/metaAh*100) : 0}%"></div></div>
-      </div>
-      <div class="goal">
-        <div class="gh"><span>Inversión</span><span class="type">${money(invMes)} / ${money(metaInv)}</span></div>
-        <div class="bar"><div class="f inv" style="width:${metaInv > 0 ? Math.min(100, invMes/metaInv*100) : 0}%"></div></div>
-      </div>
+      ${goalBarHtml({ label: 'Ahorro', icon: '💵', actual: ahorroMes, meta: metaAh, maxScale, colorClass: 'ahorro' })}
+      ${goalBarHtml({ label: 'Inversión', icon: '📈', actual: invMes, meta: metaInv, maxScale, colorClass: 'inversion' })}
     </div>
 
     <div class="section-head">
@@ -1388,7 +1428,8 @@ function setupCanvas(canvas){
   return { ctx, w: cssW, h: cssH };
 }
 
-function drawBars(canvas, values, dim){
+function drawBars(canvas, values, dim, opts={}){
+  const { selectedIdx = -1 } = opts;
   const { ctx, w, h } = setupCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
   const padL = 4, padR = 4, padT = 22, padB = 22;
@@ -1398,6 +1439,7 @@ function drawBars(canvas, values, dim){
   const bw = cw / dim;
   const today = new Date();
   const todayD = (monthKey(today) === state.mes) ? today.getDate() : -1;
+  const hasSelection = selectedIdx !== -1;
 
   // baseline
   ctx.strokeStyle = '#17332A29'; ctx.lineWidth = 1;
@@ -1408,7 +1450,8 @@ function drawBars(canvas, values, dim){
     const barH = (v / max) * ch;
     const x = padL + i * bw + 1;
     const y = padT + ch - barH;
-    ctx.fillStyle = (i+1) === todayD ? '#17332A' : (v > 0 ? '#4FA095' : '#BAD1C2');
+    const isDimmed = hasSelection && i !== selectedIdx;
+    ctx.fillStyle = isDimmed ? '#17332A22' : ((i+1) === todayD ? '#17332A' : (v > 0 ? '#4FA095' : '#BAD1C2'));
     ctx.fillRect(x, y, Math.max(1, bw - 2), Math.max(barH, v > 0 ? 2 : 0));
   }
 
@@ -1418,17 +1461,20 @@ function drawBars(canvas, values, dim){
     const maxIdx = values.indexOf(maxVal);
     const xLabel = padL + (maxIdx + 0.5) * bw;
     const yTop = padT + ch - (maxVal / max) * ch;
-    ctx.fillStyle = '#17332A';
+    ctx.fillStyle = (hasSelection && maxIdx !== selectedIdx) ? '#17332A55' : '#17332A';
     ctx.font = '600 10px ui-monospace, Menlo, monospace';
     ctx.textAlign = 'center';
     ctx.fillText(moneyC(maxVal), xLabel, Math.max(10, yTop - 6));
   }
 
-  // etiquetas: día 1, 10, 20, último
+  // etiquetas de días en el eje horizontal: primero, último, y algunos intermedios
+  // cada 10 días — se ajustan solas al rango de días que se esté mostrando.
+  const labelDays = new Set([1, dim]);
+  for (let d = 10; d < dim; d += 10) labelDays.add(d);
   ctx.fillStyle = '#17332A66';
   ctx.font = '500 10px system-ui';
   ctx.textAlign = 'center';
-  [1, 10, 20, dim].forEach(d => {
+  [...labelDays].sort((a,b) => a-b).forEach(d => {
     const x = padL + (d - 0.5) * bw;
     ctx.fillText(String(d), x, h - 6);
   });

@@ -499,18 +499,56 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
 .ah-hero .meta .k{ font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-50); }
 .ah-hero .meta .v{ font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 15px; margin-top: 3px; }
 
-.ah-goals{ margin-top: 18px; }
-.goal{
+.ah-goals{ margin-top: 6px; }
+.goal-row{
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 14px 0;
   border-bottom: 1px solid var(--ink-08);
 }
-.goal .gh{ display: flex; justify-content: space-between; font-size: 13px; }
-.goal .gh .type{ color: var(--ink-50); text-transform: uppercase; letter-spacing: .12em; font-size: 10px; }
-.goal .bar{
-  margin-top: 8px; height: 3px; background: var(--ink-08); position: relative; border-radius: 2px;
+.goal-icon{
+  width: 34px; height: 34px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  background: var(--ink-08);
 }
-.goal .bar .f{ position: absolute; left: 0; top: 0; bottom: 0; background: var(--teal); border-radius: 2px; }
-.goal .bar .f.inv{ background: var(--navy); }
+.goal-body{ flex: 1; min-width: 0; }
+.goal-head{
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px; font-size: 13px;
+}
+.goal-label{ font-weight: 600; }
+.goal-val{
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 12px; color: var(--ink); white-space: nowrap;
+}
+.goal-val .of{ color: var(--ink-50); font-weight: 400; }
+.goal-val .ok{ color: var(--teal); font-family: var(--sans); }
+.goal-track{
+  margin-top: 9px;
+  height: 10px;
+  background: var(--ink-08);
+  border-radius: 6px;
+  position: relative;
+}
+.goal-fill{
+  height: 100%;
+  min-width: 3px;
+  border-radius: 6px;
+  background: var(--teal);
+  transition: width .3s ease;
+}
+.goal-fill.inversion{ background: var(--navy); }
+.goal-line{
+  position: absolute;
+  top: -4px; bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--ink);
+  box-shadow: 0 0 0 1px var(--cream);
+}
 
 .mov-row{
   display: grid; grid-template-columns: 12px 1fr auto; gap: 12px;

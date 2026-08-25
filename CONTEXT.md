@@ -87,9 +87,12 @@ Sistema propio de modal (`#sheet` en `index.html`, controlado por `openSheet()`/
 ### 4.8 Gráficos
 - `setupCanvas()`: ajusta el canvas a devicePixelRatio.
 - `drawBars()` (ritmo diario) y `drawHist()` (histórico 6 meses): dibujado manual en `<canvas>`, sin librerías, coherente con la paleta de la app.
-  - `drawBars()` además dibuja el valor del día de mayor gasto arriba de esa barra (única referencia numérica visible; el resto del eje vertical queda sin valores, a propósito, por simplicidad) y devuelve `{ padL, bw, dim, padT, ch }` — la geometría necesaria para mapear un click del mouse/touch al día correspondiente.
-  - El click sobre el canvas de `ch-bars` (wireado en `insightsGastosBlock`, no dentro de `drawBars`) calcula el día clickeado con esa geometría y escribe el detalle (`día → monto`) en `#daybar-info`, un `<div>` aparte debajo del canvas. Es un estado local a ese gráfico: no toca `state.filterCat` ni ningún otro filtro de la app.
+  - `drawBars(canvas, values, dim, { selectedIdx })`: `dim` es dinámico, no siempre `daysInMonth`. Si el mes mostrado es el mes en curso, `insightsGastosBlock` calcula `renderDim = min(diasDelMes, díaDeHoy)` y le pasa un `values` recortado (`perDayRender`) — así el gráfico no deja un hueco vacío para los días que todavía no pasaron. En un mes ya cerrado se muestra completo.
+  - Dibuja el valor del día de mayor gasto arriba de esa barra como referencia (el resto del eje vertical sigue sin valores, a propósito, por simplicidad), y devuelve `{ padL, bw, dim, padT, ch }` — la geometría para mapear un click a un día.
+  - `opts.selectedIdx` (default `-1`): si hay un día seleccionado, esa barra mantiene su color normal y todas las demás se pintan atenuadas (`#17332A22`) para que quede claro cuál se está mirando. El label del máximo también se atenúa si no es el seleccionado.
+  - El click sobre el canvas de `ch-bars` (wireado en `insightsGastosBlock`, no dentro de `drawBars`) calcula el día clickeado con esa geometría, guarda `selectedIdx` en un closure local, vuelve a llamar `drawBars(...)` con esa selección, y escribe el detalle (`día → monto`) en `#daybar-info` debajo del canvas. Click de nuevo sobre la misma barra deselecciona. Es un estado local a ese gráfico: no toca `state.filterCat` ni ningún otro filtro de la app.
 - `catBarItemHtml()` (categorías): no usa canvas, es HTML/CSS puro (ver §4.5) para poder scrollear y clickear con más naturalidad que un canvas dibujado a mano.
+- `goalBarHtml({ label, icon, actual, meta, maxScale, colorClass })` (Insights → Ahorro): barra horizontal HTML/CSS (`.goal-track` + `.goal-fill`) con una línea de objetivo (`.goal-line`) posicionada según `meta / maxScale`. `maxScale` es una escala compartida entre la barra de Ahorro y la de Inversión (`max(metaAh, metaInv, ahorroMes, invMes, 1) * 1.15`, calculada en `insightsAhorroBlock`) para que ambas sean comparables entre sí y quede aire para que la barra supere la línea si se aportó más de lo planeado — en ese caso `fillPct` simplemente queda mayor que `goalPct`, no hay ningún cap ni caso especial adicional.
 
 ### 4.9 Alertas y notificaciones
 - `computeAlerts()` / `catStatus()`: calculan uso (%) de cada categoría contra su límite (basado en el "disponible" del plan).
@@ -101,7 +104,7 @@ Carga seed, config (moneda/locale), recordatorio; delega clicks globales para `d
 ## 5. PWA / Service Worker
 
 - `manifest.webmanifest`: nombre "Gastitos", `display: standalone`, `start_url: ./index.html`, ícono SVG único (any + maskable), tema `#F4F7F2`.
-- `sw.js` (cache `gastitos-v4`): estrategia **network-first** — intenta red primero y cachea la respuesta; si falla (sin conexión), sirve desde caché, con fallback final a `index.html`. En `activate`, limpia cachés de versiones anteriores.
+- `sw.js` (cache `gastitos-v5`): estrategia **network-first** — intenta red primero y cachea la respuesta; si falla (sin conexión), sirve desde caché, con fallback final a `index.html`. En `activate`, limpia cachés de versiones anteriores.
 - **Importante:** al cambiar `app.js`/`styles.css`/`index.html`, conviene bumpear la constante `CACHE` en `sw.js` (ej. `gastitos-v4`) para forzar invalidación de caché en usuarios existentes.
 
 ## 6. Estilo visual
@@ -129,3 +132,4 @@ Carga seed, config (moneda/locale), recordatorio; delega clicks globales para `d
 
 - **2026-08-25**: creación inicial del archivo de contexto, basado en una revisión completa de `app.js`, `index.html`, `styles.css`, `sw.js` y `manifest.webmanifest`.
 - **2026-08-25**: se documentó el flujo de deploy (auto-push vía tarea programada de Windows, §8) y los cambios de esta sesión: separador de miles en el teclado numérico (§7), reemplazo del gráfico de torta por barras horizontal-scrolleables en "Por categoría", y valor de referencia + detalle por día al click en el gráfico de "Ritmo diario" (§4.5, §4.8). Bump de `sw.js` a `gastitos-v4`.
+- **2026-08-25**: "Ritmo diario" ahora tiene rango dinámico (solo hasta hoy en el mes en curso) y al clickear un día se resalta esa barra atenuando las demás (§4.8). Insights → Ahorro: se unificó Ahorro e Inversión en un único gráfico de barras horizontales con línea de objetivo (`goalBarHtml`, §4.8), con íconos 💵 y 📈. Bump de `sw.js` a `gastitos-v5`.
