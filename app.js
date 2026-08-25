@@ -89,9 +89,12 @@ const state = {
   view: 'hoy',
   mes: monthKey(new Date()),
   filterCat: null,
+  searchQuery: '',
   cats: [], catsById: {},
   planActual: null,
-  currency: '$', locale: 'es-AR'
+  currency: '$', locale: 'es-AR',
+  reminder: { enabled: false, hour: 20, dismissed: '' },
+  notifiedToday: ''
 };
 
 function monthKey(d){ const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); return `${y}-${m}`; }
@@ -175,6 +178,84 @@ async function movimientosDelMes(mes){
   return (await DB.getAll('movimientos', 'mes', IDBKeyRange.only(mes))).sort((a,b) => a.fecha < b.fecha ? 1 : -1);
 }
 
+/* ---------- Helpers de features nuevas ---------- */
+
+async function getTopCategories(n){
+  // Contar frecuencia por categoría en el mes actual, si vacío usar todo el histórico
+  let gastos = await gastosDelMes(state.mes);
+  if (gastos.length === 0) gastos = await DB.getAll('gastos');
+  const counts = {};
+  gastos.forEach(g => { counts[g.categoriaId] = (counts[g.categoriaId] || 0) + 1; });
+  const ranked = state.cats
+    .filter(c => counts[c.id] > 0)
+    .sort((a,b) => counts[b.id] - counts[a.id])
+    .slice(0, n);
+  // Fallback: si no hay historial, primeras n categorías
+  if (ranked.length === 0) return state.cats.slice(0, n);
+  return ranked;
+}
+
+function computeAlerts(gastos, plan){
+  const disponible = plan.salario - plan.salario * (plan.pctAhorro/100) - plan.salario * (plan.pctInversion/100);
+  if (disponible <= 0 || !plan.limites) return [];
+  const byCat = {};
+  gastos.forEach(g => { byCat[g.categoriaId] = (byCat[g.categoriaId] || 0) + g.monto; });
+  const alerts = [];
+  for (const c of state.cats){
+    const pct = plan.limites[c.id];
+    if (!pct) continue;
+    const limite = disponible * pct / 100;
+    const gastado = byCat[c.id] || 0;
+    const usage = gastado / limite;
+    if (usage >= 0.8){
+      alerts.push({ cat: c, gastado, limite, usage, status: usage >= 1 ? 'over' : 'warn' });
+    }
+  }
+  return alerts.sort((a,b) => b.usage - a.usage);
+}
+
+function catStatus(catId, gastos, plan){
+  if (!plan.limites || !plan.limites[catId]) return 'none';
+  const disponible = plan.salario - plan.salario * (plan.pctAhorro/100) - plan.salario * (plan.pctInversion/100);
+  if (disponible <= 0) return 'none';
+  const limite = disponible * plan.limites[catId] / 100;
+  const gastado = gastos.filter(g => g.categoriaId === catId).reduce((s,g) => s+g.monto, 0);
+  const usage = gastado / limite;
+  if (usage >= 1) return 'over';
+  if (usage >= 0.8) return 'warn';
+  return 'ok';
+}
+
+async function loadReminderConfig(){
+  const rem = await DB.get('config', 'reminder');
+  if (rem && rem.value) state.reminder = Object.assign(state.reminder, rem.value);
+}
+
+async function saveReminderConfig(){
+  await DB.put('config', { key: 'reminder', value: state.reminder });
+}
+
+function shouldShowReminder(gastos){
+  const r = state.reminder;
+  if (!r.enabled) return false;
+  const today = todayISO();
+  if (r.dismissed === today) return false;
+  if (new Date().getHours() < (r.hour || 20)) return false;
+  const hoyGastos = gastos.filter(g => g.fecha === today);
+  return hoyGastos.length === 0;
+}
+
+async function tryNotify(msg){
+  if (!('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+  const today = todayISO();
+  if (state.notifiedToday === today) return;
+  state.notifiedToday = today;
+  try {
+    new Notification('Gastitos', { body: msg, icon: 'icon.svg', tag: 'gastitos-daily' });
+  } catch {}
+}
+
 /* ---------- Router / render ---------- */
 
 async function nav(view){
@@ -226,6 +307,11 @@ async function viewHoy(){
   const pctSpent = disponible > 0 ? totalGastado / disponible : 0;
   const spentClass = pctSpent > 1 ? 'over' : (pctSpent > 0.9 ? 'warn' : '');
 
+  const alerts = computeAlerts(gastos, plan);
+  const topCats = await getTopCategories(4);
+  const showReminder = shouldShowReminder(gastos);
+  if (showReminder) tryNotify('¿Cargaste tus gastos de hoy?');
+
   el.innerHTML = `
     <header class="hoy-head">
       <div>
@@ -249,10 +335,32 @@ async function viewHoy(){
       </div>
     </section>
 
+    ${showReminder ? `
+    <div class="reminder-chip" id="reminder-chip">
+      <span class="txt">¿Cargaste tus gastos de hoy?</span>
+      <button class="close" data-dismiss-reminder aria-label="Descartar">×</button>
+    </div>` : ''}
+
+    ${alerts.length > 0 ? `
+    <section class="alerts">
+      <div class="alert-head ${alerts.some(a => a.status==='over') ? 'over' : ''}">${alerts.some(a => a.status==='over') ? 'Te pasaste en' : 'Ojo con'}</div>
+      ${alerts.map(a => `<div class="alert-row ${a.status}">
+        <span class="cd" style="background:${a.cat.color}"></span>
+        <span>${esc(a.cat.nombre)}</span>
+        <span class="pct">${Math.round(a.usage*100)}%</span>
+      </div>`).join('')}
+    </section>` : ''}
+
     <button class="big-action" data-open="add-gasto">
       <span class="lbl">Registrar gasto</span>
       <span class="plus" aria-hidden="true">+</span>
     </button>
+
+    ${topCats.length > 0 ? `
+    <div class="quick-actions-label">De una</div>
+    <div class="quick-actions">
+      ${topCats.map(c => `<button class="qchip" data-quickcat="${c.id}"><span class="cd" style="background:${c.color}"></span>${esc(c.nombre)}<span class="plus">+</span></button>`).join('')}
+    </div>` : ''}
 
     <div class="section-head">
       <h3>Últimos movimientos</h3>
@@ -274,6 +382,16 @@ async function viewHoy(){
         }).join('')}
     </div>
   `;
+
+  // Handlers para features v2
+  $$('[data-quickcat]', el).forEach(b => b.onclick = () => openAddGasto(null, Number(b.dataset.quickcat)));
+  const dismissBtn = el.querySelector('[data-dismiss-reminder]');
+  if (dismissBtn) dismissBtn.onclick = async () => {
+    state.reminder.dismissed = todayISO();
+    await saveReminderConfig();
+    render();
+  };
+
   return el;
 }
 
@@ -288,6 +406,7 @@ async function viewPlan(){
   const isSaved = !isFromPrev && (await DB.get('planes', mes));
 
   const disponible = plan.salario - plan.salario * (plan.pctAhorro/100) - plan.salario * (plan.pctInversion/100);
+  const gastosMes = await gastosDelMes(mes);
 
   el.innerHTML = `
     <div class="hoy-head" style="padding-top:6px;">
@@ -339,7 +458,8 @@ async function viewPlan(){
     <div id="plan-limits">
       ${state.cats.map(c => {
         const pct = plan.limites?.[c.id] ?? '';
-        return `<div class="cat-limit">
+        const st = catStatus(c.id, gastosMes, plan);
+        return `<div class="cat-limit ${st === 'over' ? 'over' : (st === 'warn' ? 'warn' : '')}">
           <span class="cdot" style="background:${c.color}"></span>
           <span class="cname">${esc(c.nombre)}</span>
           <span class="cright">
@@ -401,7 +521,11 @@ async function viewGastos(){
   const el = document.createElement('div');
   el.className = 'view';
   const gastos = await gastosDelMes(state.mes);
-  const filtered = state.filterCat ? gastos.filter(g => g.categoriaId === state.filterCat) : gastos;
+  let filtered = state.filterCat ? gastos.filter(g => g.categoriaId === state.filterCat) : gastos;
+  const q = (state.searchQuery || '').trim().toLowerCase();
+  if (q){
+    filtered = filtered.filter(g => (g.nota || '').toLowerCase().includes(q));
+  }
   const total = filtered.reduce((s,g) => s + g.monto, 0);
 
   // agrupar por día
@@ -412,7 +536,7 @@ async function viewGastos(){
     <div class="hoy-head" style="padding-top:6px;">
       <div>
         <div class="eyebrow">Gastos</div>
-        <div class="hoy-date">Total del mes · ${money(total)}</div>
+        <div class="hoy-date">${q ? `${filtered.length} resultado${filtered.length!==1?'s':''} · ${money(total)}` : `Total del mes · ${money(total)}`}</div>
       </div>
       <button class="hoy-cog" aria-label="Agregar" data-open="add-gasto">+</button>
     </div>
@@ -423,12 +547,18 @@ async function viewGastos(){
       <button class="arr" data-mes-next>›</button>
     </div>
 
+    <div class="search-bar">
+      <span class="icon" aria-hidden="true">⌕</span>
+      <input type="text" id="g-search" placeholder="Buscar por nota…" value="${esc(state.searchQuery || '')}" />
+      ${state.searchQuery ? '<button class="clear" data-clear-search aria-label="Limpiar">×</button>' : ''}
+    </div>
+
     <div class="filters">
       <button class="fchip ${!state.filterCat ? 'on':''}" data-fcat="0">Todas</button>
       ${state.cats.map(c => `<button class="fchip ${state.filterCat===c.id?'on':''}" data-fcat="${c.id}"><span class="cd" style="background:${c.color}"></span>${esc(c.nombre)}</button>`).join('')}
     </div>
 
-    ${filtered.length === 0 ? '<div class="empty">No hay gastos para mostrar.</div>' :
+    ${filtered.length === 0 ? `<div class="empty">${q ? 'Nada coincide con esa búsqueda.' : 'No hay gastos para mostrar.'}</div>` :
       Object.keys(groups).sort((a,b) => b.localeCompare(a)).map(fecha => {
         const dt = parseISO(fecha);
         const label = dt.toLocaleDateString(state.locale, { weekday: 'long', day: 'numeric', month: 'long' });
@@ -437,14 +567,14 @@ async function viewGastos(){
           <div class="day-head"><span class="dl">${esc(label)}</span><span class="dt">${money(dayTot)}</span></div>
           ${groups[fecha].map(g => {
             const c = state.catsById[g.categoriaId];
-            return `<button class="gasto-row" data-edit="${g.id}" style="width:100%; text-align:left;">
+            return `<div class="gasto-row">
               <span class="cd" style="background:${c?.color || '#6B7075'}"></span>
-              <span class="col">
+              <button class="col-btn" data-edit="${g.id}">
                 <div class="cat">${esc(c?.nombre || 'Sin categoría')}</div>
                 ${g.nota ? `<div class="note">${esc(g.nota)}</div>` : ''}
-              </span>
-              <span class="amt">${money(g.monto)}</span>
-            </button>`;
+              </button>
+              <button class="amt-btn" data-edit-monto="${g.id}">${money(g.monto)}</button>
+            </div>`;
           }).join('')}
         </section>`;
       }).join('')}
@@ -459,7 +589,59 @@ async function viewGastos(){
   });
   $$('[data-edit]', el).forEach(b => b.onclick = () => openAddGasto(Number(b.dataset.edit)));
 
+  // Búsqueda (debounced)
+  const searchInput = $('#g-search', el);
+  let searchT;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchT);
+    searchT = setTimeout(() => {
+      state.searchQuery = searchInput.value;
+      render();
+      const inp = $('#g-search'); if (inp){ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    }, 220);
+  });
+  const clr = el.querySelector('[data-clear-search]');
+  if (clr) clr.onclick = () => { state.searchQuery = ''; render(); };
+
+  // Edición inline del monto
+  $$('[data-edit-monto]', el).forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    startInlineEditMonto(Number(btn.dataset.editMonto), btn);
+  });
+
   return el;
+}
+
+async function startInlineEditMonto(gastoId, btnEl){
+  const g = await DB.get('gastos', gastoId);
+  if (!g) return;
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.step = '0.01';
+  input.min = '0';
+  input.inputMode = 'decimal';
+  input.className = 'amt-input';
+  input.value = g.monto;
+  const parent = btnEl.parentNode;
+  parent.replaceChild(input, btnEl);
+  input.focus();
+  input.select();
+  let done = false;
+  const save = async () => {
+    if (done) return; done = true;
+    const val = Number(input.value);
+    if (val > 0 && val !== g.monto){
+      g.monto = val;
+      await DB.put('gastos', g);
+      toast('Actualizado');
+    }
+    render();
+  };
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter'){ e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape'){ done = true; render(); }
+  });
 }
 
 /* ---------- INSIGHTS ---------- */
@@ -509,6 +691,20 @@ async function viewInsights(){
     <section class="insights-tot">
       <div class="eyebrow">Total gastado</div>
       <div class="display">${money(total, true)}</div>
+      ${(() => {
+        const prev = history[history.length - 2];
+        if (!prev || prev.total === 0) return '';
+        const diff = total - prev.total;
+        const pct = Math.round(Math.abs(diff / prev.total) * 100);
+        const dir = diff > 0 ? 'up' : (diff < 0 ? 'down' : 'flat');
+        const arrow = diff > 0 ? '↑' : (diff < 0 ? '↓' : '·');
+        const label = diff > 0 ? 'más' : (diff < 0 ? 'menos' : 'igual');
+        return `<div class="compare ${dir}">
+          <span class="arrow">${arrow}</span>
+          <span>${money(Math.abs(diff))} ${label} (${pct}%)</span>
+          <span class="from">vs ${esc(monthShort(prev.mes).replace('.',''))}</span>
+        </div>`;
+      })()}
     </section>
 
     <section class="chart-block">
@@ -640,8 +836,8 @@ $$('[data-sheet-close]', document).forEach(b => b.onclick = closeSheet);
 
 /* ---------- Sheet: agregar/editar gasto ---------- */
 
-async function openAddGasto(editId){
-  let g = { fecha: todayISO(), monto: '', categoriaId: state.cats[0]?.id || 1, nota: '' };
+async function openAddGasto(editId, preselectCatId){
+  let g = { fecha: todayISO(), monto: '', categoriaId: preselectCatId || state.cats[0]?.id || 1, nota: '' };
   if (editId){
     const existing = await DB.get('gastos', editId);
     if (existing) g = existing;
@@ -839,16 +1035,62 @@ async function openCatsEditor(){
 /* ---------- Sheet: settings + backup + recurrentes ---------- */
 
 async function openSettings(){
+  const hours = Array.from({length: 24}, (_, i) => i);
+  const canNotify = ('Notification' in window);
+  const notifStatus = canNotify ? Notification.permission : 'unsupported';
   const body = `
+    <div class="reminder-config">
+      <div class="top">
+        <div>
+          <div class="lbl">Recordatorio diario</div>
+          <div class="sub" style="font-size:12px; color:var(--ink-50); margin-top:2px;">Te aviso si aún no cargaste gastos hoy.</div>
+        </div>
+        <button class="toggle ${state.reminder.enabled ? 'on' : ''}" id="rem-toggle" aria-label="Activar recordatorio"></button>
+      </div>
+      <div class="hour" id="rem-hour-row" style="${state.reminder.enabled ? '' : 'display:none;'}">
+        <span class="k">a partir de las</span>
+        <select id="rem-hour">
+          ${hours.map(h => `<option value="${h}" ${state.reminder.hour === h ? 'selected' : ''}>${String(h).padStart(2,'0')}:00</option>`).join('')}
+        </select>
+      </div>
+      ${canNotify && state.reminder.enabled && notifStatus !== 'granted' ? `
+      <div class="permit" id="rem-permit-wrap">
+        Solo verás el chip dentro de la app. <button class="btn-permit" id="rem-permit">Activar notificaciones nativas</button>
+      </div>` : ''}
+      ${canNotify && notifStatus === 'granted' ? '<div class="permit" style="color:var(--teal);">Notificaciones activadas ✓</div>' : ''}
+    </div>
     <div class="settings-row" data-go="cats"><div><div class="lbl">Categorías</div><div class="sub">Nombres y colores</div></div><span class="go">Editar ›</span></div>
     <div class="settings-row" data-go="rec"><div><div class="lbl">Gastos recurrentes</div><div class="sub">Se suman automáticamente al iniciar el mes</div></div><span class="go">Configurar ›</span></div>
     <div class="settings-row" data-go="export"><div><div class="lbl">Exportar backup</div><div class="sub">Guardá tus datos en un archivo JSON</div></div><span class="go">Descargar ›</span></div>
     <div class="settings-row" data-go="import"><div><div class="lbl">Importar backup</div><div class="sub">Reemplaza los datos actuales</div></div><span class="go">Elegir ›</span></div>
     <div class="settings-row" data-go="wipe"><div><div class="lbl" style="color:var(--danger);">Borrar todos los datos</div><div class="sub">Esta acción no se puede deshacer</div></div><span class="go" style="color:var(--danger);">Borrar ›</span></div>
     <input type="file" id="import-file" accept="application/json" style="display:none" />
-    <div style="padding:24px 0 4px; text-align:center; color:var(--ink-50); font-size:11px;">Gastitos · versión 1.0 · datos locales</div>
+    <div style="padding:24px 0 4px; text-align:center; color:var(--ink-50); font-size:11px;">Gastitos · versión 1.1 · datos locales</div>
   `;
   openSheet('Ajustes', body, (root) => {
+    const toggle = $('#rem-toggle', root);
+    const hourRow = $('#rem-hour-row', root);
+    const hourSel = $('#rem-hour', root);
+    toggle.onclick = async () => {
+      state.reminder.enabled = !state.reminder.enabled;
+      toggle.classList.toggle('on', state.reminder.enabled);
+      hourRow.style.display = state.reminder.enabled ? '' : 'none';
+      await saveReminderConfig();
+    };
+    hourSel.onchange = async () => {
+      state.reminder.hour = Number(hourSel.value);
+      await saveReminderConfig();
+    };
+    const permit = $('#rem-permit', root);
+    if (permit) permit.onclick = async () => {
+      try {
+        const r = await Notification.requestPermission();
+        if (r === 'granted') toast('Notificaciones activadas');
+        else toast('Permiso denegado');
+      } catch { toast('No se pudo activar'); }
+      closeSheet(); setTimeout(openSettings, 200);
+    };
+
     root.querySelector('[data-go="cats"]').onclick = () => { closeSheet(); setTimeout(openCatsEditor, 200); };
     root.querySelector('[data-go="rec"]').onclick  = () => { closeSheet(); setTimeout(openRecurrentes, 200); };
     root.querySelector('[data-go="export"]').onclick = doExport;
@@ -859,6 +1101,7 @@ async function openSettings(){
       if (!confirm('Última confirmación. ¿Borrar todo?')) return;
       for (const s of ['config','categorias','gastos','planes','movimientos','recurrentes']) await DB.clear(s);
       await ensureSeed();
+      state.reminder = { enabled: false, hour: 20, dismissed: '' };
       closeSheet();
       toast('Datos borrados');
       state.mes = monthKey(new Date());
@@ -1144,6 +1387,7 @@ async function init(){
   const loc = await DB.get('config', 'locale');
   if (cur?.value) state.currency = cur.value;
   if (loc?.value) state.locale = loc.value;
+  await loadReminderConfig();
 
   // Delegación global para data-open y data-nav en anchors
   document.body.addEventListener('click', (e) => {

@@ -1,4 +1,4 @@
-const CACHE = 'gastitos-v1';
+const CACHE = 'gastitos-v2';
 const ASSETS = [
   './',
   './index.html',

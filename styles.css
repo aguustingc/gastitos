@@ -667,3 +667,212 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
 
 /* Focus */
 :focus-visible{ outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 4px; }
+
+/* ============================================================
+   FEATURES v2 — alertas, quick chips, comparativa, búsqueda, edit inline
+   ============================================================ */
+
+/* Quick action chips (Hoy) */
+.quick-actions-label{
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-50);
+  margin-top: 4px;
+  margin-bottom: 10px;
+}
+.quick-actions{
+  display: flex; gap: 8px; overflow-x: auto;
+  padding-bottom: 4px;
+  margin: 0 calc(var(--pad) * -1) 0;
+  padding-left: var(--pad); padding-right: var(--pad);
+  scrollbar-width: none;
+}
+.quick-actions::-webkit-scrollbar{ display: none; }
+.quick-actions .qchip{
+  flex: none;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--ink-15);
+  font-size: 12px;
+  display: inline-flex; align-items: center; gap: 8px;
+  white-space: nowrap;
+  transition: transform .1s ease;
+}
+.quick-actions .qchip:active{ transform: scale(.97); }
+.quick-actions .qchip .cd{ width: 8px; height: 8px; border-radius: 50%; }
+.quick-actions .qchip .plus{ color: var(--ink-50); font-size: 13px; margin-left: 2px; }
+
+/* Alertas de límite (Hoy) */
+.alerts{
+  margin-top: 22px;
+  padding: 16px 0 6px;
+  border-top: 1px solid var(--ink-15);
+  border-bottom: 1px solid var(--ink-15);
+}
+.alerts .alert-head{
+  font-size: 10px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--warn);
+  margin-bottom: 8px;
+}
+.alerts .alert-head.over{ color: var(--danger); }
+.alert-row{
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 13px;
+}
+.alert-row .cd{ width: 8px; height: 8px; border-radius: 50%; }
+.alert-row .pct{
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--warn);
+}
+.alert-row.over{ color: var(--danger); }
+.alert-row.over .pct{ color: var(--danger); font-weight: 600; }
+
+/* Chip de recordatorio (Hoy) */
+.reminder-chip{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-top: 18px;
+  background: var(--mint);
+  border-radius: 14px;
+}
+.reminder-chip .txt{ font-size: 13px; font-style: italic; font-family: var(--serif); }
+.reminder-chip .close{
+  color: var(--navy-soft);
+  font-size: 20px;
+  padding: 0 6px;
+  flex: none;
+}
+
+/* Comparativa vs mes anterior (Insights) */
+.compare{
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  margin-top: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.compare .arrow{ font-family: var(--sans); font-size: 13px; }
+.compare.up{ color: var(--warn); }
+.compare.down{ color: var(--teal); }
+.compare.flat{ color: var(--ink-50); }
+.compare .from{ color: var(--ink-50); font-size: 11px; }
+
+/* Búsqueda (Gastos) */
+.search-bar{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--ink-08);
+  border-radius: 999px;
+  margin-top: 14px;
+}
+.search-bar .icon{ color: var(--ink-50); font-size: 14px; }
+.search-bar input{
+  flex: 1;
+  background: transparent;
+  border: 0;
+  font-size: 14px;
+  outline: none;
+  color: var(--ink);
+}
+.search-bar input::placeholder{ color: var(--ink-50); }
+.search-bar .clear{ color: var(--ink-50); font-size: 18px; padding: 0 4px; }
+
+/* Cat limits: sobre-límite (Plan) */
+.cat-limit.over .cname{ color: var(--danger); }
+.cat-limit.over .cright input{ color: var(--danger); }
+.cat-limit.warn .cright input{ color: var(--warn); }
+
+/* Edición inline del monto (Gastos) */
+.gasto-row .amt-btn{
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  margin: -4px -6px;
+  transition: background .1s ease;
+}
+.gasto-row .amt-btn:active{ background: var(--ink-08); }
+.gasto-row .amt-input{
+  width: 110px;
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  border-bottom: 1px dashed var(--teal);
+  padding: 2px 0;
+  color: var(--teal);
+}
+.gasto-row .col-btn{
+  min-width: 0;
+  text-align: left;
+  padding: 0;
+}
+
+/* Config de recordatorio (Settings) */
+.reminder-config{
+  padding: 16px 0;
+  border-bottom: 1px solid var(--ink-08);
+}
+.reminder-config .top{
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+}
+.reminder-config .top .lbl{ font-size: 14px; }
+.reminder-config .toggle{
+  width: 42px; height: 24px; border-radius: 999px;
+  background: var(--ink-15); position: relative;
+  transition: background .2s ease;
+  flex: none;
+}
+.reminder-config .toggle::after{
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--cream);
+  transition: transform .2s ease;
+}
+.reminder-config .toggle.on{ background: var(--teal); }
+.reminder-config .toggle.on::after{ transform: translateX(18px); }
+.reminder-config .hour{
+  display: flex; align-items: baseline; gap: 8px;
+  margin-top: 10px;
+  padding-left: 2px;
+}
+.reminder-config .hour .k{ font-size: 12px; color: var(--ink-50); }
+.reminder-config .hour select{
+  padding: 4px 10px;
+  border: 1px solid var(--ink-15);
+  border-radius: 8px;
+  background: var(--cream);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.reminder-config .permit{
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ink-50);
+}
+.reminder-config .permit .btn-permit{
+  color: var(--teal);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
