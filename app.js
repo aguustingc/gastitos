@@ -755,7 +755,7 @@ async function viewInsights(){
   el.innerHTML = `
     <div class="hoy-head" style="padding-top:6px;">
       <div>
-        <div class="eyebrow">Insights</div>
+        <div class="eyebrow">Reportes</div>
         <div class="hoy-date">${tab === 'ahorro' ? 'Acumulado histórico' : 'Comportamiento de tus gastos'}</div>
       </div>
       <button class="hoy-cog" aria-label="${tab === 'ahorro' ? 'Agregar' : 'Ajustes'}" data-open="${tab === 'ahorro' ? 'add-mov' : 'settings'}">${tab === 'ahorro' ? '+' : '⚙'}</button>
@@ -957,10 +957,6 @@ async function insightsAhorroBlock(){
     <section class="ah-hero" style="margin-top:18px;">
       <div class="eyebrow">Total acumulado</div>
       <div class="display">${money(totAcum, true)}</div>
-      <div class="meta">
-        <div><div class="k">Ahorro</div><div class="v">${money(totAh)}</div></div>
-        <div><div class="k">Inversión</div><div class="v">${money(totInv)}</div></div>
-      </div>
     </section>
 
     <div class="section-head">

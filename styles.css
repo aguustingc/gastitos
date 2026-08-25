@@ -573,7 +573,7 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
   padding-bottom: var(--safe-b);
   background: var(--cream);
   border-top: 1px solid var(--ink-15);
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   z-index: 20;
 }
 #nav button{
@@ -583,6 +583,7 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
   color: var(--ink-50);
   position: relative;
   padding-top: 6px;
+  text-align: center;
 }
 #nav button.on{ color: var(--ink); }
 #nav button.on::before{
