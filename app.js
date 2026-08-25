@@ -1415,7 +1415,12 @@ function setupCanvas(canvas){
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   const cssW = rect.width || canvas.width;
-  const cssH = Number(canvas.getAttribute('height')) || 240;
+  // El height attribute se pisa más abajo con el alto en píxeles de dispositivo,
+  // así que lo guardamos una sola vez en un dataset: si lo releyéramos del
+  // attribute en cada llamada, cada redraw multiplicaría el alto por el dpr
+  // de nuevo (el canvas crecía sin parar al clickear una barra).
+  if (!canvas.dataset.cssH) canvas.dataset.cssH = canvas.getAttribute('height') || '240';
+  const cssH = Number(canvas.dataset.cssH) || 240;
   canvas.style.height = cssH + 'px';
   canvas.width  = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
