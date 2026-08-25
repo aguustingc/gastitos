@@ -423,17 +423,71 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
   display: block;
 }
 
-.legend{ margin-top: 14px; }
-.legend .lr{
-  display: grid; grid-template-columns: 12px 1fr auto auto; gap: 10px;
-  align-items: baseline;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--ink-08);
-  font-size: 13px;
+/* Gráfico de barras horizontal-scrolleable, "Por categoría" */
+.cat-bars-scroll{
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  padding-bottom: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
 }
-.legend .lr .cd{ width: 10px; height: 10px; border-radius: 50%; align-self: center; }
-.legend .lr .pct{ font-family: var(--mono); font-size: 12px; color: var(--ink-50); }
-.legend .lr .amt{ font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.cat-bars-scroll::-webkit-scrollbar{ height: 4px; }
+.cat-bars-scroll::-webkit-scrollbar-thumb{ background: var(--ink-15); border-radius: 4px; }
+.cat-bar-item{
+  flex: 0 0 calc((100% - 40px) / 5); /* 5 columnas visibles (4 gaps de 10px) */
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.cat-bar-amt{
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--ink-50);
+  white-space: nowrap;
+}
+.cat-bar-track{
+  width: 100%;
+  height: 120px;
+  display: flex;
+  align-items: flex-end;
+  background: var(--ink-08);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cat-bar-fill{ width: 100%; min-height: 4px; border-radius: 6px 6px 0 0; }
+.cat-bar-cat{ display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.cat-bar-name{
+  font-size: 10px;
+  color: var(--ink);
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-bar-pct{ font-family: var(--mono); font-size: 10px; color: var(--ink-50); }
+
+/* Detalle del día al clickear una barra de "Ritmo diario" */
+.daybar-info{
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--cream-2);
+  border-radius: 10px;
+  font-size: 13px;
+  min-height: 18px;
+}
+.daybar-info .hint{ color: var(--ink-50); font-style: italic; font-family: var(--serif); }
+.daybar-info .d{ text-transform: capitalize; color: var(--ink-50); }
+.daybar-info .v{ font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
 
 /* ============================================================
    Vista AHORRO
@@ -896,7 +950,6 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
 /* Ajuste de columnas para acomodar el badge más grande */
 .gasto-row{ grid-template-columns: 32px 1fr auto; }
 .cat-limit{ grid-template-columns: 32px 1fr auto; }
-.legend .lr{ grid-template-columns: 26px 1fr auto auto; }
 .rec-row{ grid-template-columns: 26px 1fr auto auto; }
 
 /* Teclado numérico */

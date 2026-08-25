@@ -163,11 +163,21 @@ function catBadge(c, size){
 
 /* ---------- Teclado numérico reutilizable ---------- */
 
+// Formatea un "raw" (dígitos + opcional coma decimal, sin separador de miles)
+// agregando puntos cada 3 dígitos en la parte entera, para mostrar mientras se tipea.
+function formatRawForDisplay(raw){
+  if (!raw) return '0';
+  const [intPartRaw, decPart] = raw.split(',');
+  const intDigits = (intPartRaw || '').replace(/\D/g, '');
+  const formattedInt = intDigits === '' ? '0' : intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return decPart !== undefined ? `${formattedInt},${decPart}` : formattedInt;
+}
+
 function keypadHtml(id, currency, initialValue){
   const initRaw = initialValue ? String(initialValue).replace('.', ',') : '';
   return `
     <div class="keypad-display" id="${id}-display">
-      <span class="cur">${currency}</span><span class="val" data-raw="${esc(initRaw)}">${initRaw || '0'}</span>
+      <span class="cur">${currency}</span><span class="val" data-raw="${esc(initRaw)}">${esc(formatRawForDisplay(initRaw))}</span>
     </div>
     <div class="keypad-grid" id="${id}-grid">
       ${['1','2','3','4','5','6','7','8','9',',','0','⌫'].map(k =>
@@ -181,7 +191,7 @@ function wireKeypad(root, id, onChange){
   const valEl = root.querySelector(`#${id}-display .val`);
   let raw = valEl.dataset.raw || '';
   const render = () => {
-    valEl.textContent = raw || '0';
+    valEl.textContent = formatRawForDisplay(raw);
     onChange(Number(raw.replace(',', '.')) || 0);
   };
   $$(`#${id}-grid button`, root).forEach(btn => {
@@ -821,21 +831,16 @@ async function insightsGastosBlock(){
 
     <section class="chart-block">
       <h4>Por categoría</h4>
-      <canvas class="cnv" id="ch-donut" width="600" height="320"></canvas>
-      <div class="legend">
-        ${catData.length === 0 ? '<div class="empty">Sin datos.</div>' :
-          catData.map(c => `<div class="lr">
-            ${catBadge(c, 'sm')}
-            <span>${esc(c.nombre)}</span>
-            <span class="pct">${Math.round(c.pct*100)}%</span>
-            <span class="amt">${money(c.monto)}</span>
-          </div>`).join('')}
-      </div>
+      ${catData.length === 0 ? '<div class="empty">Sin datos.</div>' : `
+      <div class="cat-bars-scroll">
+        ${catData.map(c => catBarItemHtml(c, catData[0].monto)).join('')}
+      </div>`}
     </section>
 
     <section class="chart-block">
       <h4>Ritmo diario</h4>
       <canvas class="cnv" id="ch-bars" width="600" height="240"></canvas>
+      <div class="daybar-info" id="daybar-info"><span class="hint">Tocá un día para ver el detalle</span></div>
     </section>
 
     <section class="chart-block" style="border-bottom:0;">
@@ -845,12 +850,46 @@ async function insightsGastosBlock(){
   `;
 
   requestAnimationFrame(() => {
-    drawDonut($('#ch-donut', el), catData);
-    drawBars($('#ch-bars', el), perDay, dim);
+    const barsCanvas = $('#ch-bars', el);
+    const geo = drawBars(barsCanvas, perDay, dim);
     drawHist($('#ch-hist', el), history);
+
+    // Click sobre una barra del ritmo diario: muestra el gasto de ese día,
+    // sin afectar ningún otro filtro de la app.
+    const info = $('#daybar-info', el);
+    barsCanvas.onclick = (e) => {
+      const rect = barsCanvas.getBoundingClientRect();
+      const xCss = e.clientX - rect.left;
+      const idx = Math.min(geo.dim - 1, Math.max(0, Math.floor((xCss - geo.padL) / geo.bw)));
+      const day = idx + 1;
+      const val = perDay[idx];
+      const fecha = `${state.mes}-${String(day).padStart(2,'0')}`;
+      const label = parseISO(fecha).toLocaleDateString(state.locale, { weekday: 'long', day: 'numeric', month: 'long' });
+      info.innerHTML = `<span class="d">${esc(label)}</span><span class="v">${money(val)}</span>`;
+    };
   });
 
   return el;
+}
+
+// Item del gráfico de barras horizontal-scrolleable "Por categoría".
+// Barras ordenadas de mayor a menor; las primeras 5 se ven sin scrollear,
+// el resto aparece deslizando el contenedor hacia la derecha.
+function catBarItemHtml(c, maxMonto){
+  const pctHeight = maxMonto > 0 ? Math.max(4, Math.round((c.monto / maxMonto) * 100)) : 0;
+  return `
+    <div class="cat-bar-item">
+      <div class="cat-bar-amt">${moneyC(c.monto)}</div>
+      <div class="cat-bar-track">
+        <div class="cat-bar-fill" style="height:${pctHeight}%; background:${c.color};"></div>
+      </div>
+      <div class="cat-bar-cat">
+        ${catBadge(c, 'sm')}
+        <span class="cat-bar-name">${esc(c.nombre)}</span>
+      </div>
+      <div class="cat-bar-pct">${Math.round(c.pct*100)}%</div>
+    </div>
+  `;
 }
 
 async function insightsAhorroBlock(){
@@ -1349,47 +1388,10 @@ function setupCanvas(canvas){
   return { ctx, w: cssW, h: cssH };
 }
 
-function drawDonut(canvas, data){
-  const { ctx, w, h } = setupCanvas(canvas);
-  ctx.clearRect(0, 0, w, h);
-  const cx = w/2, cy = h/2;
-  const r  = Math.min(w, h) * 0.42;
-  const ir = r * 0.62;
-  const total = data.reduce((s,d) => s + d.monto, 0);
-  if (total === 0){
-    ctx.fillStyle = '#17332A66';
-    ctx.font = 'italic 16px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Sin datos', cx, cy);
-    return;
-  }
-  let a = -Math.PI/2;
-  const gap = 0.014;
-  data.forEach(d => {
-    const frac = d.monto / total;
-    const b = a + frac * Math.PI * 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r,  a + gap, b - gap, false);
-    ctx.arc(cx, cy, ir, b - gap, a + gap, true);
-    ctx.closePath();
-    ctx.fillStyle = d.color;
-    ctx.fill();
-    a = b;
-  });
-  // etiqueta central: total
-  ctx.fillStyle = '#17332A';
-  ctx.textAlign = 'center';
-  ctx.font = '500 10px system-ui';
-  ctx.fillText('TOTAL', cx, cy - 10);
-  ctx.font = '400 24px Georgia, serif';
-  const txt = `${state.currency} ${formatMoney(total, { showDec: false })}`;
-  ctx.fillText(txt, cx, cy + 16);
-}
-
 function drawBars(canvas, values, dim){
   const { ctx, w, h } = setupCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
-  const padL = 4, padR = 4, padT = 8, padB = 22;
+  const padL = 4, padR = 4, padT = 22, padB = 22;
   const cw = w - padL - padR;
   const ch = h - padT - padB;
   const max = Math.max(1, ...values);
@@ -1409,6 +1411,19 @@ function drawBars(canvas, values, dim){
     ctx.fillStyle = (i+1) === todayD ? '#17332A' : (v > 0 ? '#4FA095' : '#BAD1C2');
     ctx.fillRect(x, y, Math.max(1, bw - 2), Math.max(barH, v > 0 ? 2 : 0));
   }
+
+  // Valor del gasto más alto del mes, como referencia para leer el resto de las barras.
+  const maxVal = Math.max(...values);
+  if (maxVal > 0){
+    const maxIdx = values.indexOf(maxVal);
+    const xLabel = padL + (maxIdx + 0.5) * bw;
+    const yTop = padT + ch - (maxVal / max) * ch;
+    ctx.fillStyle = '#17332A';
+    ctx.font = '600 10px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(moneyC(maxVal), xLabel, Math.max(10, yTop - 6));
+  }
+
   // etiquetas: día 1, 10, 20, último
   ctx.fillStyle = '#17332A66';
   ctx.font = '500 10px system-ui';
@@ -1417,6 +1432,9 @@ function drawBars(canvas, values, dim){
     const x = padL + (d - 0.5) * bw;
     ctx.fillText(String(d), x, h - 6);
   });
+
+  // Geometría del gráfico, para poder mapear clicks a un día específico.
+  return { padL, bw, dim, padT, ch };
 }
 
 function drawHist(canvas, hist){
