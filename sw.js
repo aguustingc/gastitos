@@ -1,4 +1,4 @@
-const CACHE = 'gastitos-v2';
+const CACHE = 'gastitos-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -20,17 +20,16 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Red primero: siempre busca la versión más nueva si hay conexión.
+// Si falla (sin internet), recién ahí usa lo que tenga guardado en caché.
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   e.respondWith(
-    caches.match(req).then((hit) => {
-      if (hit) return hit;
-      return fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => { try { c.put(req, copy); } catch {} });
-        return res;
-      }).catch(() => caches.match('./index.html'));
-    })
+    fetch(req).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => { try { c.put(req, copy); } catch {} });
+      return res;
+    }).catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
   );
 });
