@@ -298,10 +298,11 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
   border-bottom: 1px solid var(--ink-08);
 }
 .cat-limit .cdot{ width: 10px; height: 10px; border-radius: 50%; }
-.cat-limit .cname{ font-size: 15px; }
+.cat-limit .cname{ font-size: 15px; display: flex; flex-direction: column; gap: 2px; }
+.cat-limit .cname .cpct{ font-size: 11px; color: var(--ink-50); font-weight: 400; }
 .cat-limit .cright{ display: flex; align-items: baseline; gap: 4px; }
 .cat-limit .cright input{
-  width: 46px; text-align: right;
+  width: 84px; text-align: right;
   font-family: var(--mono); font-variant-numeric: tabular-nums;
   font-size: 15px;
   border-bottom: 1px dashed var(--ink-15);
@@ -715,6 +716,117 @@ input::-webkit-outer-spin-button, input::-webkit-inner-spin-button{ -webkit-appe
 .sheet-cta .btn.primary{ background: var(--navy); color: var(--cream); }
 .sheet-cta .btn.ghost{ border: 1px solid var(--ink-15); color: var(--ink); }
 .sheet-cta .btn.danger{ color: var(--danger); border: 1px solid #C0392B33; }
+
+/* Preview de importación de backup */
+.import-preview{
+  border-top: 1px solid var(--ink-08);
+}
+.ip-row{
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ink-08);
+  font-size: 14px;
+}
+.ip-row span{ color: var(--ink-50); }
+.ip-row b{ font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ip-note{
+  font-size: 12.5px; color: var(--ink-50); line-height: 1.5;
+  margin: 14px 0 0;
+}
+.ip-note strong{ color: var(--ink); }
+
+/* Confirm dialog (reemplaza confirm() nativo) */
+.confirm{
+  position: fixed; inset: 0;
+  z-index: 70;
+  visibility: hidden;
+  display: grid; place-items: center;
+  padding: 0 32px;
+}
+.confirm.open{ visibility: visible; }
+.confirm-scrim{
+  position: absolute; inset: 0;
+  background: #15346266;
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+.confirm.open .confirm-scrim{ opacity: 1; }
+.confirm-card{
+  position: relative;
+  width: 100%; max-width: 320px;
+  background: var(--cream);
+  border-radius: 18px;
+  padding: 22px 22px 18px;
+  text-align: center;
+  transform: scale(.94);
+  opacity: 0;
+  transition: transform .18s cubic-bezier(.2,.7,.2,1), opacity .18s ease;
+  box-shadow: 0 12px 40px #15346233;
+}
+.confirm.open .confirm-card{ transform: none; opacity: 1; }
+.confirm-card h2{
+  margin: 0 0 8px;
+  font: italic 400 19px/1.2 var(--serif);
+  color: var(--ink);
+}
+.confirm-card p{
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-50);
+}
+.confirm-cta{
+  display: flex; gap: 8px; margin-top: 20px;
+}
+.confirm-cta .btn{
+  flex: 1;
+  padding: 12px;
+  border-radius: 999px;
+  font-size: 13px; letter-spacing: .02em;
+  border: 1px solid var(--ink-15);
+  color: var(--ink);
+}
+.confirm-cta .btn.danger{
+  background: var(--danger); color: var(--cream); border-color: var(--danger);
+}
+
+/* Visualmente oculto, disponible para lectores de pantalla */
+.sr-only{
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* Proyección de fin de mes ("A este ritmo...") */
+.projection{
+  margin-top: 14px;
+  display: flex; align-items: baseline; gap: 7px;
+  font-size: 12.5px; color: var(--ink-50);
+  line-height: 1.4;
+}
+.projection .ic{ font-size: 12px; }
+.projection b{ color: var(--ink); font-weight: 600; }
+.projection.over{ color: var(--warn); }
+.projection.over .ic{ color: var(--warn); }
+.projection.over b{ color: var(--warn); }
+
+/* Chip de recurrentes pendientes en Hoy */
+.pending-chip{
+  margin-top: 16px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: var(--cream-2);
+  border-radius: 12px;
+  font-size: 13px;
+}
+.pending-chip .txt{ flex: 1; color: var(--ink); }
+.pending-chip .txt b{ font-weight: 600; }
+.pending-chip button.apply{
+  padding: 8px 14px;
+  background: var(--navy); color: var(--cream);
+  border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
 
 /* Toast */
 #toast{

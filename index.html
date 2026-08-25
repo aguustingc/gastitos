@@ -37,6 +37,18 @@
     </section>
   </div>
 
+  <div id="confirm" class="confirm" aria-hidden="true">
+    <div class="confirm-scrim" data-confirm-cancel></div>
+    <section class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h2 id="confirm-title">·</h2>
+      <p id="confirm-msg"></p>
+      <div class="confirm-cta">
+        <button class="btn" id="confirm-cancel">Cancelar</button>
+        <button class="btn danger" id="confirm-ok">Confirmar</button>
+      </div>
+    </section>
+  </div>
+
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="app.js" type="module"></script>

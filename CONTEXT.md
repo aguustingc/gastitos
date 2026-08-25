@@ -2,7 +2,7 @@
 
 > Este archivo describe qué es Gastitos, para qué sirve, cómo está construida y su arquitectura técnica. Debe actualizarse cada vez que se implementen cambios relevantes, para mantenerse sincronizado con el estado real del proyecto.
 >
-> Última actualización: 2026-08-25 (auto-push por tarea programada de Windows; ver §9)
+> Última actualización: 2026-08-25 — sesión de correcciones post-auditoría UX (ver §9)
 
 ## 1. Qué es y para qué sirve
 
@@ -63,8 +63,10 @@ Objeto mutable en memoria que no persiste directamente (se deriva de la DB en ca
 - Todas las vistas son funciones async que devuelven un `HTMLElement` construido con `innerHTML` + wiring manual de event handlers (`onclick`, `addEventListener`).
 
 ### 4.5 Vistas principales
-1. **Hoy** (`viewHoy`): pantalla principal. Muestra disponible del mes, gastado/ahorro/inversión, barra de progreso del mes, alertas de límites superados/cerca del límite, botón grande "Registrar gasto", accesos rápidos a categorías top, últimos movimientos. Si no hay plan cargado, muestra `viewOnboarding()` (pantalla de bienvenida para ingresar el salario inicial).
+1. **Hoy** (`viewHoy`): pantalla principal. Muestra disponible del mes, gastado/ahorro/inversión, barra de progreso del mes, una **proyección de cierre de mes** ("A este ritmo vas a terminar gastando $X"), alertas de límites superados/cerca del límite, un chip de recurrentes pendientes de aplicar (si hay alguno, con botón "Aplicar" de un toque), botón grande "Registrar gasto", accesos rápidos a categorías top, últimos movimientos. Si no hay plan cargado, muestra `viewOnboarding()` (pantalla de bienvenida para ingresar el salario inicial); sin plan, la card principal muestra "Gastado este mes" en tono normal (no un saldo negativo, que confundía).
+   - `projectSpend(totalGastado, dayOfMonth, dim, disponible)`: proyecta el total de fin de mes a partir del promedio diario de gasto hasta hoy (`totalGastado / dayOfMonth * diasDelMes`). Sólo se calcula/muestra si hay plan, es el mes en curso, hay algo gastado y todavía quedan días por delante — no tiene sentido en un mes ya cerrado o recién empezado sin datos. Si la proyección supera el disponible, se resalta en tono de advertencia (`.projection.over`).
 2. **Plan** (`viewPlan`): configuración del mes — salario, % ahorro/inversión (con cálculo en vivo del disponible), límites de gasto opcionales por categoría, guardar/borrar plan. Si no hay plan para el mes, se copia automáticamente el del mes anterior (`_fromPrev`).
+   - **Límites por categoría**: se ingresan como **monto directo** (`plan.limites[catId]` = pesos), no como porcentaje del disponible como antes — pedirle al usuario "% de un % del sueldo" era una cuenta de tres pasos para algo que en cualquier app de presupuesto es escribir un número. Cada fila muestra, como referencia secundaria y no editable, a cuánto % del disponible equivale ese monto (`≈N% del disponible`, calculado en el momento del render, no en vivo mientras se tipea). `catStatus()` y `computeAlerts()` comparan `gastado / limite` directamente contra ese monto, sin pasar por `disponible` en el camino.
 3. **Gastos** (`viewGastos`): listado de gastos del mes agrupados por día, con buscador (por nota, debounced), filtro por categoría, edición inline del monto y navegación mes a mes.
 4. **Insights** (`viewInsights`): dos sub-tabs:
    - *Gastos*: total del mes vs. mes anterior; gráfico de barras horizontal-scrolleable "Por categoría" (HTML/CSS, no canvas — ver nota abajo); gráfico de barras de ritmo diario (`<canvas>`); histórico de 6 meses (`<canvas>`).
@@ -78,11 +80,20 @@ Sistema propio de modal (`#sheet` en `index.html`, controlado por `openSheet()`/
 - `openAddMov()` — alta/edición/borrado de aporte de ahorro/inversión.
 - `openCatsEditor()` — alta/edición/borrado de categorías (color, ícono, nombre, orden).
 - `openSettings()` — recordatorio diario (con Notification API opcional), acceso a categorías y recurrentes, exportar/importar backup JSON, borrar todos los datos.
-- `openRecurrentes()` / `openRecEditor()` — gestión de gastos recurrentes y aplicación al mes actual (evita duplicados vía nota `rec:<id>`).
+- `openRecurrentes()` / `openRecEditor()` — gestión de gastos recurrentes. `getPendingRecurrentes(mes)` calcula cuáles todavía no se cargaron ese mes (comparando notas `rec:<id>` contra los gastos existentes); `applyRecurrentes(mes)` los carga y devuelve cuántos agregó — función compartida entre el botón "Aplicar al mes actual" de este sheet y el chip de Hoy (ver §4.5).
+
+Además existe un segundo overlay, independiente del sheet: `#confirm` (`openConfirm(message, opts)` en `app.js`), un diálogo de confirmación propio que reemplaza a los `confirm()` nativos del navegador — devuelve una `Promise<boolean>`. Se usa para todo borrado (gasto, aporte, recurrente, plan) y para el borrado total de datos (con dos confirmaciones en cadena). Vive fuera de `#sheet` a propósito: si el usuario abre la confirmación desde dentro de otro sheet ya abierto (ej. borrar un gasto desde el sheet de edición), el sheet de fondo no se pierde — el confirm es una capa aparte con su propio z-index, no un reemplazo del contenido del sheet.
 
 ### 4.7 Export/Import
 - `doExport()`: descarga un JSON con todos los object stores (`_app: 'gastitos'`, `_version: 1`).
-- `doImport(file)`: valida el JSON, limpia todos los stores y los repuebla; corre `ensureSeed()` al final.
+- `doImport(file)`: valida el JSON y muestra un sheet de **preview** (cantidad de gastos/aportes/categorías/recurrentes y rango de fechas) antes de tocar nada. Al confirmar, `mergeImport(data)` **suma** el contenido al histórico actual — nunca reemplaza ni limpia stores:
+  - `categorias`: se emparejan por `nombre` (case-insensitive), no por `id` (dos exports en momentos distintos pueden traer ids que ya no corresponden a la misma categoría acá). Si no hay match, se crea una categoría nueva. Se arma un `idMap` (id viejo del JSON → id real en esta DB) para remapear `categoriaId` en gastos y recurrentes importados.
+  - `gastos`: se deduplican por `fecha + categoriaId (ya remapeado) + monto` — si ya existe un gasto con esa combinación exacta, se omite (no se agrega ni se pisa).
+  - `movimientos`: dedup por `fecha + tipo + monto`.
+  - `recurrentes`: dedup por `nombre + monto + dia`.
+  - `planes`: sólo se agrega el plan importado de un mes si ese mes **no** tiene plan ya guardado (nunca se pisa un plan existente).
+  - `config` (moneda/locale/recordatorio) no se toca en el import — son preferencias locales del dispositivo, no "datos" a fusionar.
+  - Reemplaza los antiguos `confirm()`/`alert()` nativos: los errores de parseo van por `toast()`, la confirmación es el propio sheet de preview con botón "Importar".
 
 ### 4.8 Gráficos
 - `setupCanvas()`: ajusta el canvas a devicePixelRatio.
@@ -91,6 +102,8 @@ Sistema propio de modal (`#sheet` en `index.html`, controlado por `openSheet()`/
   - Dibuja el valor del día de mayor gasto arriba de esa barra como referencia (el resto del eje vertical sigue sin valores, a propósito, por simplicidad), y devuelve `{ padL, bw, dim, padT, ch }` — la geometría para mapear un click a un día.
   - `opts.selectedIdx` (default `-1`): si hay un día seleccionado, esa barra mantiene su color normal y todas las demás se pintan atenuadas (`#17332A22`) para que quede claro cuál se está mirando. El label del máximo también se atenúa si no es el seleccionado.
   - El click sobre el canvas de `ch-bars` (wireado en `insightsGastosBlock`, no dentro de `drawBars`) calcula el día clickeado con esa geometría, guarda `selectedIdx` en un closure local, vuelve a llamar `drawBars(...)` con esa selección, y escribe el detalle (`día → monto`) en `#daybar-info` debajo del canvas. Click de nuevo sobre la misma barra deselecciona. Es un estado local a ese gráfico: no toca `state.filterCat` ni ningún otro filtro de la app.
+  - `drawHist(canvas, hist, { selectedIdx })` tiene el mismo mecanismo de selección/atenuado que `drawBars` (antes sólo `drawBars` era clickeable) y también devuelve `{ padL, bw }` para mapear clicks a un mes — wireado igual que `ch-bars`, con su propio `#hist-info` debajo del canvas.
+  - **Accesibilidad**: como el canvas no expone nada a un lector de pantalla por sí solo, ambos `<canvas>` (`ch-bars`, `ch-hist`) llevan `role="img"` + un `aria-label` dinámico calculado por `ritmoDiarioSummary()` / `historicoSummary()` (total, pico, o el detalle de los 6 meses en una frase). Además, cada uno tiene al lado una `<ul class="sr-only">` con el valor de cada día/mes como texto real en el DOM — no sólo un resumen, sino el detalle completo, para quien navegue con lector de pantalla sin depender del tap-to-read. `.sr-only` es el patrón estándar de "visualmente oculto pero accesible" (no `display:none`, que también lo oculta de la accessibility tree).
 - `catBarItemHtml()` (categorías): no usa canvas, es HTML/CSS puro (ver §4.5) para poder scrollear y clickear con más naturalidad que un canvas dibujado a mano.
 - `goalBarHtml({ label, icon, actual, meta, maxScale, colorClass })` (Insights → Ahorro): barra horizontal HTML/CSS (`.goal-track` + `.goal-fill`) con una línea de objetivo (`.goal-line`) posicionada según `meta / maxScale`. `maxScale` es una escala compartida entre la barra de Ahorro y la de Inversión (`max(metaAh, metaInv, ahorroMes, invMes, 1) * 1.15`, calculada en `insightsAhorroBlock`) para que ambas sean comparables entre sí y quede aire para que la barra supere la línea si se aportó más de lo planeado — en ese caso `fillPct` simplemente queda mayor que `goalPct`, no hay ningún cap ni caso especial adicional.
 
@@ -133,3 +146,12 @@ Carga seed, config (moneda/locale), recordatorio; delega clicks globales para `d
 - **2026-08-25**: creación inicial del archivo de contexto, basado en una revisión completa de `app.js`, `index.html`, `styles.css`, `sw.js` y `manifest.webmanifest`.
 - **2026-08-25**: se documentó el flujo de deploy (auto-push vía tarea programada de Windows, §8) y los cambios de esta sesión: separador de miles en el teclado numérico (§7), reemplazo del gráfico de torta por barras horizontal-scrolleables en "Por categoría", y valor de referencia + detalle por día al click en el gráfico de "Ritmo diario" (§4.5, §4.8). Bump de `sw.js` a `gastitos-v4`.
 - **2026-08-25**: "Ritmo diario" ahora tiene rango dinámico (solo hasta hoy en el mes en curso) y al clickear un día se resalta esa barra atenuando las demás (§4.8). Insights → Ahorro: se unificó Ahorro e Inversión en un único gráfico de barras horizontales con línea de objetivo (`goalBarHtml`, §4.8), con íconos 💵 y 📈. Bump de `sw.js` a `gastitos-v5`.
+- **2026-08-25**: sesión de correcciones a partir de una auditoría UX/producto completa de la app. Cambios:
+  - Copy de "Gastos recurrentes" corregido (ya no dice "automático" cuando requiere un toque) + chip real de "recurrentes pendientes" con botón "Aplicar" en Hoy (§4.5, §4.6).
+  - Hoy sin plan cargado: ya no muestra un saldo negativo confuso, muestra "Gastado este mes" en tono normal (§4.5).
+  - Todos los `confirm()`/`alert()` nativos reemplazados por `openConfirm()`, un diálogo propio coherente con el resto del sistema de sheets (§4.6).
+  - Límites por categoría: de "% del disponible" a monto directo en pesos, con el % como referencia secundaria (§4.5).
+  - Los dos gráficos de canvas (`ch-bars`, `ch-hist`) ahora tienen `aria-label` dinámico + lista `.sr-only` con el detalle completo; "Últimos 6 meses" ganó la misma interacción de tap-to-read que ya tenía "Ritmo diario" (§4.8).
+  - Import de backup: ahora muestra un preview (cantidades + rango de fechas) antes de importar, y **suma** al histórico en vez de reemplazarlo — con deduplicación por store (gastos por fecha+categoría+monto, movimientos por fecha+tipo+monto, recurrentes por nombre+monto+día, categorías emparejadas por nombre, planes sin pisar los existentes) (§4.7).
+  - Proyección de cierre de mes ("A este ritmo vas a terminar gastando $X") en Hoy, a partir del promedio diario de gasto (§4.5).
+  - Versión visible bumpeada a 1.2. Bump de `sw.js` a `gastitos-v6`.

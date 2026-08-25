@@ -236,6 +236,28 @@ async function movimientosDelMes(mes){
   return (await DB.getAll('movimientos', 'mes', IDBKeyRange.only(mes))).sort((a,b) => a.fecha < b.fecha ? 1 : -1);
 }
 
+// Recurrentes de ese mes que todavía no se cargaron como gasto (nota "rec:<id>").
+async function getPendingRecurrentes(mes){
+  const rec = await DB.getAll('recurrentes');
+  if (rec.length === 0) return [];
+  const gs = await gastosDelMes(mes);
+  const appliedKeys = new Set(gs.filter(g => g.nota).map(g => g.nota));
+  return rec.filter(r => !appliedKeys.has(`rec:${r.id}`));
+}
+
+// Carga como gasto cada recurrente que todavía no esté aplicado ese mes.
+// Devuelve cuántos se agregaron. Compartida entre el chip de Hoy y el sheet de Recurrentes.
+async function applyRecurrentes(mes){
+  const pending = await getPendingRecurrentes(mes);
+  const dim = daysInMonth(mes);
+  for (const r of pending){
+    const day = Math.min(r.dia || 1, dim);
+    const fecha = `${mes}-${String(day).padStart(2,'0')}`;
+    await DB.add('gastos', { fecha, mes, monto: r.monto, categoriaId: r.categoriaId, nota: `rec:${r.id}`, createdAt: Date.now() });
+  }
+  return pending.length;
+}
+
 /* ---------- Helpers de features nuevas ---------- */
 
 async function getTopCategories(n){
@@ -254,15 +276,13 @@ async function getTopCategories(n){
 }
 
 function computeAlerts(gastos, plan){
-  const disponible = plan.salario - plan.salario * (plan.pctAhorro/100) - plan.salario * (plan.pctInversion/100);
-  if (disponible <= 0 || !plan.limites) return [];
+  if (!plan.limites) return [];
   const byCat = {};
   gastos.forEach(g => { byCat[g.categoriaId] = (byCat[g.categoriaId] || 0) + g.monto; });
   const alerts = [];
   for (const c of state.cats){
-    const pct = plan.limites[c.id];
-    if (!pct) continue;
-    const limite = disponible * pct / 100;
+    const limite = plan.limites[c.id];
+    if (!limite) continue;
     const gastado = byCat[c.id] || 0;
     const usage = gastado / limite;
     if (usage >= 0.8){
@@ -273,15 +293,20 @@ function computeAlerts(gastos, plan){
 }
 
 function catStatus(catId, gastos, plan){
-  if (!plan.limites || !plan.limites[catId]) return 'none';
-  const disponible = plan.salario - plan.salario * (plan.pctAhorro/100) - plan.salario * (plan.pctInversion/100);
-  if (disponible <= 0) return 'none';
-  const limite = disponible * plan.limites[catId] / 100;
+  const limite = plan.limites?.[catId];
+  if (!limite) return 'none';
   const gastado = gastos.filter(g => g.categoriaId === catId).reduce((s,g) => s+g.monto, 0);
   const usage = gastado / limite;
   if (usage >= 1) return 'over';
   if (usage >= 0.8) return 'warn';
   return 'ok';
+}
+
+// Proyección de cierre de mes a partir del ritmo de gasto diario hasta hoy.
+function projectSpend(totalGastado, dayOfMonth, dim, disponible){
+  const avgPerDay = totalGastado / dayOfMonth;
+  const projected = avgPerDay * dim;
+  return { projected, overBudget: disponible > 0 && projected > disponible };
 }
 
 async function loadReminderConfig(){
@@ -388,16 +413,19 @@ async function viewHoy(){
 
   const dim = daysInMonth(mes);
   const today = new Date();
-  const dayOfMonth = today.getMonth() === parseInt(mes.split('-')[1])-1 && today.getFullYear() === parseInt(mes.split('-')[0])
-    ? today.getDate() : dim;
+  const isCurrentMonth = mes === monthKey(today);
+  const dayOfMonth = isCurrentMonth ? today.getDate() : dim;
   const pctMonth = Math.min(1, dayOfMonth / dim);
   const pctSpent = disponible > 0 ? totalGastado / disponible : 0;
   const spentClass = pctSpent > 1 ? 'over' : (pctSpent > 0.9 ? 'warn' : '');
+  const proj = (plan.salario > 0 && isCurrentMonth && totalGastado > 0 && dayOfMonth < dim)
+    ? projectSpend(totalGastado, dayOfMonth, dim, disponible) : null;
 
   const alerts = computeAlerts(gastos, plan);
   const topCats = await getTopCategories(4);
   const showReminder = shouldShowReminder(gastos);
   if (showReminder) tryNotify('¿Cargaste tus gastos de hoy?');
+  const pendingRec = await getPendingRecurrentes(mes);
 
   el.innerHTML = `
     <header class="hoy-head">
@@ -409,23 +437,35 @@ async function viewHoy(){
     </header>
 
     <section class="balance">
-      <div class="eyebrow">${plan.salario > 0 ? 'Disponible del mes' : 'Sin plan cargado'}</div>
-      <div class="display ${restante < 0 ? 'neg' : ''}">${money(plan.salario > 0 ? restante : -totalGastado, true)}</div>
+      <div class="eyebrow">${plan.salario > 0 ? 'Disponible del mes' : 'Gastado este mes'}</div>
+      <div class="display ${plan.salario > 0 && restante < 0 ? 'neg' : ''}">${money(plan.salario > 0 ? restante : totalGastado, true)}</div>
       <div class="balance-meta">
         <div class="cell"><div class="k">Gastado</div><div class="v">${moneyC(totalGastado)}</div></div>
         <div class="cell"><div class="k">Ahorro</div><div class="v">${moneyC(totalAhorrado)}</div></div>
         <div class="cell"><div class="k">Inversión</div><div class="v">${moneyC(totalInvertido)}</div></div>
       </div>
+      ${plan.salario > 0 ? `
       <div class="progress-line" aria-hidden="true">
         <div class="fill ${spentClass}" style="width:${Math.min(100, pctSpent*100)}%"></div>
         <div class="tick" style="left:${pctMonth*100}%" data-label="hoy"></div>
-      </div>
+      </div>` : ''}
+      ${proj ? `
+      <div class="projection ${proj.overBudget ? 'over' : ''}">
+        <span class="ic" aria-hidden="true">${proj.overBudget ? '⚠' : '↗'}</span>
+        <span>A este ritmo vas a terminar gastando <b>${money(proj.projected)}</b>${proj.overBudget ? ` — ${money(proj.projected - disponible)} más de lo disponible` : ''}</span>
+      </div>` : ''}
     </section>
 
     ${showReminder ? `
     <div class="reminder-chip" id="reminder-chip">
       <span class="txt">¿Cargaste tus gastos de hoy?</span>
       <button class="close" data-dismiss-reminder aria-label="Descartar">×</button>
+    </div>` : ''}
+
+    ${pendingRec.length > 0 ? `
+    <div class="pending-chip" id="pending-chip">
+      <span class="txt">Tenés <b>${pendingRec.length}</b> recurrente${pendingRec.length>1?'s':''} de ${esc(monthShort(mes).replace('.',''))} sin aplicar</span>
+      <button class="apply" data-apply-recurrentes>Aplicar</button>
     </div>` : ''}
 
     ${alerts.length > 0 ? `
@@ -475,6 +515,12 @@ async function viewHoy(){
   if (dismissBtn) dismissBtn.onclick = async () => {
     state.reminder.dismissed = todayISO();
     await saveReminderConfig();
+    render();
+  };
+  const applyBtn = el.querySelector('[data-apply-recurrentes]');
+  if (applyBtn) applyBtn.onclick = async () => {
+    const added = await applyRecurrentes(mes);
+    toast(added ? `${added} recurrente${added>1?'s':''} aplicado${added>1?'s':''}` : 'Ya estaban aplicados');
     render();
   };
 
@@ -548,14 +594,15 @@ async function viewPlan(){
     </div>
     <div id="plan-limits" style="${hasLimits ? '' : 'display:none;'}">
       ${state.cats.map(c => {
-        const pct = plan.limites?.[c.id] ?? '';
+        const monto = plan.limites?.[c.id] ?? '';
+        const pctRef = (monto && disponible > 0) ? Math.round((monto/disponible)*100) : null;
         const st = catStatus(c.id, gastosMes, plan);
         return `<div class="cat-limit ${st === 'over' ? 'over' : (st === 'warn' ? 'warn' : '')}">
           ${catBadge(c)}
-          <span class="cname">${esc(c.nombre)}</span>
+          <span class="cname">${esc(c.nombre)}${pctRef !== null ? `<span class="cpct">≈ ${pctRef}% del disponible</span>` : ''}</span>
           <span class="cright">
-            <input type="number" inputmode="decimal" min="0" max="100" data-lim="${c.id}" value="${pct}" placeholder="—" />
-            <span class="sym">%</span>
+            <span class="sym">${state.currency}</span>
+            <input type="number" inputmode="decimal" min="0" data-lim="${c.id}" value="${monto}" placeholder="—" />
           </span>
         </div>`;
       }).join('')}
@@ -607,7 +654,8 @@ async function viewPlan(){
   };
   const clr = el.querySelector('#pl-clear');
   if (clr) clr.onclick = async () => {
-    if (!confirm('¿Borrar el plan de este mes?')) return;
+    const ok = await openConfirm('¿Borrar el plan de este mes? Esta acción no se puede deshacer.', { title: '¿Borrar plan?' });
+    if (!ok) return;
     await DB.del('planes', mes);
     toast('Plan eliminado');
     render();
@@ -846,13 +894,16 @@ async function insightsGastosBlock(){
 
     <section class="chart-block">
       <h4>Ritmo diario</h4>
-      <canvas class="cnv" id="ch-bars" width="600" height="240"></canvas>
+      <canvas class="cnv" id="ch-bars" width="600" height="240" role="img" aria-label="${esc(ritmoDiarioSummary(perDayRender))}"></canvas>
+      <ul class="sr-only">${perDayRender.map((v,i) => `<li>Día ${i+1}: ${money(v)}</li>`).join('')}</ul>
       <div class="daybar-info" id="daybar-info"><span class="hint">Tocá un día para ver el detalle</span></div>
     </section>
 
     <section class="chart-block" style="border-bottom:0;">
       <h4>Últimos 6 meses</h4>
-      <canvas class="cnv" id="ch-hist" width="600" height="240"></canvas>
+      <canvas class="cnv" id="ch-hist" width="600" height="240" role="img" aria-label="${esc(historicoSummary(history))}"></canvas>
+      <ul class="sr-only">${history.map(h => `<li>${esc(monthLabel(h.mes))}: ${money(h.total)}</li>`).join('')}</ul>
+      <div class="daybar-info" id="hist-info"><span class="hint">Tocá un mes para ver el detalle</span></div>
     </section>
   `;
 
@@ -860,7 +911,6 @@ async function insightsGastosBlock(){
     const barsCanvas = $('#ch-bars', el);
     let selectedIdx = -1;
     let geo = drawBars(barsCanvas, perDayRender, renderDim, { selectedIdx });
-    drawHist($('#ch-hist', el), history);
 
     // Click sobre una barra del ritmo diario: resalta esa barra (el resto se
     // atenúa) y muestra el gasto de ese día. Filtro local a este gráfico,
@@ -882,6 +932,27 @@ async function insightsGastosBlock(){
         info.innerHTML = `<span class="d">${esc(label)}</span><span class="v">${money(val)}</span>`;
       }
       geo = drawBars(barsCanvas, perDayRender, renderDim, { selectedIdx });
+    };
+
+    // Mismo patrón de click-para-detalle que "Ritmo diario", para que los dos
+    // gráficos de canvas se comporten igual (antes sólo uno de los dos era interactivo).
+    const histCanvas = $('#ch-hist', el);
+    let selectedHistIdx = -1;
+    let histGeo = drawHist(histCanvas, history, { selectedIdx: selectedHistIdx });
+    const histInfo = $('#hist-info', el);
+    histCanvas.onclick = (e) => {
+      const rect = histCanvas.getBoundingClientRect();
+      const xCss = e.clientX - rect.left;
+      const idx = Math.min(history.length - 1, Math.max(0, Math.floor((xCss - histGeo.padL) / histGeo.bw)));
+      if (selectedHistIdx === idx){
+        selectedHistIdx = -1;
+        histInfo.innerHTML = `<span class="hint">Tocá un mes para ver el detalle</span>`;
+      } else {
+        selectedHistIdx = idx;
+        const h = history[idx];
+        histInfo.innerHTML = `<span class="d">${esc(monthLabel(h.mes))}</span><span class="v">${money(h.total)}</span>`;
+      }
+      histGeo = drawHist(histCanvas, history, { selectedIdx: selectedHistIdx });
     };
   });
 
@@ -1006,6 +1077,36 @@ function closeSheet(){
 }
 $$('[data-sheet-close]', document).forEach(b => b.onclick = closeSheet);
 
+/* ---------- Confirm dialog (reemplaza confirm() nativo) ---------- */
+
+// Diálogo de confirmación propio, coherente con el resto del sistema de sheets.
+// Devuelve una Promise<boolean> — se resuelve en true si el usuario confirma.
+function openConfirm(message, opts={}){
+  const { title = 'Confirmar', confirmLabel = 'Eliminar' } = opts;
+  return new Promise((resolve) => {
+    const dlg = $('#confirm');
+    $('#confirm-title').textContent = title;
+    $('#confirm-msg').textContent = message;
+    const okBtn = $('#confirm-ok');
+    const cancelBtn = $('#confirm-cancel');
+    okBtn.textContent = confirmLabel;
+    dlg.classList.add('open');
+    dlg.setAttribute('aria-hidden', 'false');
+    let done = false;
+    const finish = (val) => {
+      if (done) return; done = true;
+      dlg.classList.remove('open');
+      dlg.setAttribute('aria-hidden', 'true');
+      okBtn.onclick = null; cancelBtn.onclick = null;
+      $$('[data-confirm-cancel]', dlg).forEach(b => b.onclick = null);
+      resolve(val);
+    };
+    okBtn.onclick = () => finish(true);
+    cancelBtn.onclick = () => finish(false);
+    $$('[data-confirm-cancel]', dlg).forEach(b => b.onclick = () => finish(false));
+  });
+}
+
 /* ---------- Sheet: agregar/editar gasto ---------- */
 
 async function openAddGasto(editId, preselectCatId){
@@ -1059,7 +1160,8 @@ async function openAddGasto(editId, preselectCatId){
     };
     const del = $('#ag-del', root);
     if (del) del.onclick = async () => {
-      if (!confirm('¿Eliminar este gasto?')) return;
+      const ok = await openConfirm('¿Eliminar este gasto? Esta acción no se puede deshacer.', { title: '¿Eliminar gasto?' });
+      if (!ok) return;
       await DB.del('gastos', editId);
       toast('Gasto eliminado');
       closeSheet();
@@ -1120,7 +1222,8 @@ async function openAddMov(editId){
     };
     const del = $('#mv-del', root);
     if (del) del.onclick = async () => {
-      if (!confirm('¿Eliminar este aporte?')) return;
+      const ok = await openConfirm('¿Eliminar este aporte? Esta acción no se puede deshacer.', { title: '¿Eliminar aporte?' });
+      if (!ok) return;
       await DB.del('movimientos', editId);
       toast('Aporte eliminado');
       closeSheet();
@@ -1227,12 +1330,12 @@ async function openSettings(){
       ${canNotify && notifStatus === 'granted' ? '<div class="permit" style="color:var(--teal);">Notificaciones activadas ✓</div>' : ''}
     </div>
     <div class="settings-row" data-go="cats"><div><div class="lbl">Categorías</div><div class="sub">Nombres y colores</div></div><span class="go">Editar ›</span></div>
-    <div class="settings-row" data-go="rec"><div><div class="lbl">Gastos recurrentes</div><div class="sub">Se suman automáticamente al iniciar el mes</div></div><span class="go">Configurar ›</span></div>
+    <div class="settings-row" data-go="rec"><div><div class="lbl">Gastos recurrentes</div><div class="sub">Se aplican con un toque al empezar el mes</div></div><span class="go">Configurar ›</span></div>
     <div class="settings-row" data-go="export"><div><div class="lbl">Exportar backup</div><div class="sub">Guardá tus datos en un archivo JSON</div></div><span class="go">Descargar ›</span></div>
-    <div class="settings-row" data-go="import"><div><div class="lbl">Importar backup</div><div class="sub">Reemplaza los datos actuales</div></div><span class="go">Elegir ›</span></div>
+    <div class="settings-row" data-go="import"><div><div class="lbl">Importar backup</div><div class="sub">Suma los datos de un archivo JSON a los actuales</div></div><span class="go">Elegir ›</span></div>
     <div class="settings-row" data-go="wipe"><div><div class="lbl" style="color:var(--danger);">Borrar todos los datos</div><div class="sub">Esta acción no se puede deshacer</div></div><span class="go" style="color:var(--danger);">Borrar ›</span></div>
     <input type="file" id="import-file" accept="application/json" style="display:none" />
-    <div style="padding:24px 0 4px; text-align:center; color:var(--ink-50); font-size:11px;">Gastitos · versión 1.1 · datos locales</div>
+    <div style="padding:24px 0 4px; text-align:center; color:var(--ink-50); font-size:11px;">Gastitos · versión 1.2 · datos locales</div>
   `;
   openSheet('Ajustes', body, (root) => {
     const toggle = $('#rem-toggle', root);
@@ -1264,8 +1367,10 @@ async function openSettings(){
     root.querySelector('[data-go="import"]').onclick = () => $('#import-file', root).click();
     $('#import-file', root).onchange = (e) => doImport(e.target.files[0]);
     root.querySelector('[data-go="wipe"]').onclick = async () => {
-      if (!confirm('¿Borrar TODOS los datos de Gastitos? Es irreversible.')) return;
-      if (!confirm('Última confirmación. ¿Borrar todo?')) return;
+      const ok1 = await openConfirm('Se van a borrar todos tus gastos, planes, aportes y categorías. Es irreversible.', { title: '¿Borrar todos los datos?' });
+      if (!ok1) return;
+      const ok2 = await openConfirm('Última confirmación: esto no se puede deshacer.', { title: 'Confirmá de nuevo', confirmLabel: 'Sí, borrar todo' });
+      if (!ok2) return;
       for (const s of ['config','categorias','gastos','planes','movimientos','recurrentes']) await DB.clear(s);
       await ensureSeed();
       state.reminder = { enabled: false, hour: 20, dismissed: '' };
@@ -1304,24 +1409,14 @@ async function openRecurrentes(){
   `;
   openSheet('Gastos recurrentes', body, (root) => {
     $$('[data-del]', root).forEach(b => b.onclick = async () => {
-      if (!confirm('¿Eliminar este recurrente?')) return;
+      const ok = await openConfirm('¿Eliminar este recurrente? Esta acción no se puede deshacer.', { title: '¿Eliminar recurrente?' });
+      if (!ok) return;
       await DB.del('recurrentes', Number(b.dataset.del));
       closeSheet(); setTimeout(openRecurrentes, 150);
     });
     $('#rec-add', root).onclick = () => openRecEditor(null);
     $('#rec-apply', root).onclick = async () => {
-      const rec = await DB.getAll('recurrentes');
-      const gs = await gastosDelMes(state.mes);
-      let added = 0;
-      for (const r of rec){
-        const key = `rec:${r.id}`;
-        if (gs.some(g => g.nota === key)) continue;
-        const dim = daysInMonth(state.mes);
-        const day = Math.min(r.dia || 1, dim);
-        const fecha = `${state.mes}-${String(day).padStart(2,'0')}`;
-        await DB.add('gastos', { fecha, mes: state.mes, monto: r.monto, categoriaId: r.categoriaId, nota: key, createdAt: Date.now() });
-        added++;
-      }
+      const added = await applyRecurrentes(state.mes);
       toast(added ? `${added} recurrente${added>1?'s':''} aplicado${added>1?'s':''}` : 'Ya estaban aplicados');
       closeSheet();
       render();
@@ -1384,27 +1479,124 @@ async function doExport(){
   toast('Backup descargado');
 }
 
+// Importar SUMA al historial actual, nunca lo reemplaza. Para no duplicar al
+// re-importar el mismo backup dos veces, cada store define su propia noción
+// de "mismo registro" y lo omite si ya existe (ver mergeImport()).
 async function doImport(file){
   if (!file) return;
+  let data;
   try {
     const text = await file.text();
-    const data = JSON.parse(text);
-    if (data._app !== 'gastitos') throw new Error('Archivo no válido');
-    if (!confirm('Esto reemplaza tus datos actuales. ¿Continuar?')) return;
-    for (const s of ['config','categorias','gastos','planes','movimientos','recurrentes']) await DB.clear(s);
-    for (const c of (data.categorias || [])) await DB.put('categorias', c);
-    for (const g of (data.gastos || [])) await DB.put('gastos', g);
-    for (const p of (data.planes || [])) await DB.put('planes', p);
-    for (const m of (data.movimientos || [])) await DB.put('movimientos', m);
-    for (const r of (data.recurrentes || [])) await DB.put('recurrentes', r);
-    for (const k of (data.config || [])) await DB.put('config', k);
-    await ensureSeed();
-    toast('Backup importado');
-    closeSheet();
-    render();
+    data = JSON.parse(text);
+    if (data._app !== 'gastitos') throw new Error('no es un backup de Gastitos');
   } catch (e){
-    alert('No pude leer ese archivo: ' + e.message);
+    toast('No pude leer ese archivo (' + e.message + ')');
+    return;
   }
+
+  const nGastos = (data.gastos || []).length;
+  const nMovs = (data.movimientos || []).length;
+  const nCats = (data.categorias || []).length;
+  const nRecs = (data.recurrentes || []).length;
+  const fechas = (data.gastos || []).map(g => g.fecha).sort();
+  const rango = fechas.length ? `del ${fechas[0]} al ${fechas[fechas.length-1]}` : '';
+
+  const body = `
+    <div class="import-preview">
+      <div class="ip-row"><span>Gastos</span><b>${nGastos}</b></div>
+      <div class="ip-row"><span>Aportes de ahorro/inversión</span><b>${nMovs}</b></div>
+      <div class="ip-row"><span>Categorías</span><b>${nCats}</b></div>
+      <div class="ip-row"><span>Recurrentes</span><b>${nRecs}</b></div>
+      ${rango ? `<div class="ip-row"><span>Rango de fechas</span><b>${esc(rango)}</b></div>` : ''}
+    </div>
+    <p class="ip-note">Esto se <strong>suma</strong> a tus datos actuales — no se borra nada. Si un gasto tiene la misma fecha, categoría y monto que uno que ya tenés, se omite para no duplicarlo.</p>
+    <div class="sheet-cta">
+      <button class="btn ghost" id="ip-cancel">Cancelar</button>
+      <button class="btn primary" id="ip-ok">Importar</button>
+    </div>
+  `;
+  openSheet('Importar backup', body, (root) => {
+    $('#ip-cancel', root).onclick = closeSheet;
+    $('#ip-ok', root).onclick = async () => {
+      const result = await mergeImport(data);
+      await ensureSeed();
+      toast(`Importado: ${result.addedGastos} gastos nuevos${result.dupGastos ? `, ${result.dupGastos} duplicados omitidos` : ''}`);
+      closeSheet();
+      render();
+    };
+  });
+}
+
+// Fusiona un dump exportado con los datos actuales. Las categorías se emparejan
+// por nombre (no por id: dos exports en momentos distintos pueden traer ids que
+// ya no corresponden a la misma categoría acá) y se arma un mapa de ids viejos →
+// ids reales para remapear categoriaId en gastos y recurrentes.
+async function mergeImport(data){
+  const existingCats = await DB.getAll('categorias');
+  const catByName = new Map(existingCats.map(c => [c.nombre.trim().toLowerCase(), c]));
+  const idMap = {};
+  for (const c of (data.categorias || [])){
+    const key = (c.nombre || '').trim().toLowerCase();
+    if (!key) continue;
+    if (catByName.has(key)){
+      idMap[c.id] = catByName.get(key).id;
+    } else {
+      const newId = await DB.add('categorias', { nombre: c.nombre, color: c.color, icono: c.icono, orden: c.orden });
+      idMap[c.id] = newId;
+      catByName.set(key, { id: newId, nombre: c.nombre });
+    }
+  }
+  const remapCat = (id) => idMap[id] ?? id;
+
+  const existingGastos = await DB.getAll('gastos');
+  const gastoKey = (g) => `${g.fecha}|${g.categoriaId}|${g.monto}`;
+  const gastoKeys = new Set(existingGastos.map(gastoKey));
+  let addedGastos = 0, dupGastos = 0;
+  for (const g of (data.gastos || [])){
+    const rec = { fecha: g.fecha, mes: g.mes || g.fecha.slice(0,7), monto: g.monto, categoriaId: remapCat(g.categoriaId), nota: g.nota || '', createdAt: g.createdAt || Date.now() };
+    const key = gastoKey(rec);
+    if (gastoKeys.has(key)){ dupGastos++; continue; }
+    gastoKeys.add(key);
+    await DB.add('gastos', rec);
+    addedGastos++;
+  }
+
+  const existingMovs = await DB.getAll('movimientos');
+  const movKey = (m) => `${m.fecha}|${m.tipo}|${m.monto}`;
+  const movKeys = new Set(existingMovs.map(movKey));
+  let addedMovs = 0;
+  for (const m of (data.movimientos || [])){
+    const rec = { fecha: m.fecha, mes: m.mes || m.fecha.slice(0,7), monto: m.monto, tipo: m.tipo, instrumento: m.instrumento || '' };
+    const key = movKey(rec);
+    if (movKeys.has(key)) continue;
+    movKeys.add(key);
+    await DB.add('movimientos', rec);
+    addedMovs++;
+  }
+
+  // Planes: nunca se pisa uno existente — si ese mes ya tiene plan, se conserva el actual.
+  let addedPlanes = 0;
+  for (const p of (data.planes || [])){
+    const existing = await DB.get('planes', p.mes);
+    if (existing) continue;
+    await DB.put('planes', p);
+    addedPlanes++;
+  }
+
+  const existingRecs = await DB.getAll('recurrentes');
+  const recKey = (r) => `${(r.nombre||'').trim().toLowerCase()}|${r.monto}|${r.dia}`;
+  const recKeys = new Set(existingRecs.map(recKey));
+  let addedRecs = 0;
+  for (const r of (data.recurrentes || [])){
+    const rec = { nombre: r.nombre, monto: r.monto, categoriaId: remapCat(r.categoriaId), dia: r.dia };
+    const key = recKey(rec);
+    if (recKeys.has(key)) continue;
+    recKeys.add(key);
+    await DB.add('recurrentes', rec);
+    addedRecs++;
+  }
+
+  return { addedGastos, dupGastos, addedMovs, addedPlanes, addedRecs };
 }
 
 /* ==============================================================
@@ -1484,7 +1676,8 @@ function drawBars(canvas, values, dim, opts={}){
   return { padL, bw, dim, padT, ch };
 }
 
-function drawHist(canvas, hist){
+function drawHist(canvas, hist, opts={}){
+  const { selectedIdx = -1 } = opts;
   const { ctx, w, h } = setupCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
   const padL = 8, padR = 8, padT = 20, padB = 30;
@@ -1493,6 +1686,7 @@ function drawHist(canvas, hist){
   const max = Math.max(1, ...hist.map(x => x.total));
   const n = hist.length;
   const bw = cw / n;
+  const hasSelection = selectedIdx !== -1;
 
   // baseline
   ctx.strokeStyle = '#17332A29'; ctx.lineWidth = 1;
@@ -1503,11 +1697,12 @@ function drawHist(canvas, hist){
     const x = padL + i * bw + bw*0.15;
     const y = padT + ch - barH;
     const isCur = d.mes === state.mes;
-    ctx.fillStyle = isCur ? '#17332A' : '#BAD1C2';
+    const isDimmed = hasSelection && i !== selectedIdx;
+    ctx.fillStyle = isDimmed ? '#17332A22' : (isCur ? '#17332A' : '#BAD1C2');
     ctx.fillRect(x, y, bw*0.7, Math.max(barH, 2));
 
     // label mes
-    ctx.fillStyle = isCur ? '#17332A' : '#17332A66';
+    ctx.fillStyle = isDimmed ? '#17332A55' : (isCur ? '#17332A' : '#17332A66');
     ctx.font = '500 10px system-ui';
     ctx.textAlign = 'center';
     ctx.fillText(monthShort(d.mes).replace('.', ''), x + bw*0.35, h - 14);
@@ -1515,10 +1710,28 @@ function drawHist(canvas, hist){
     // valor
     if (d.total > 0){
       ctx.font = '500 10px ui-monospace, Menlo, monospace';
-      ctx.fillStyle = isCur ? '#17332A' : '#17332A66';
+      ctx.fillStyle = isDimmed ? '#17332A55' : (isCur ? '#17332A' : '#17332A66');
       ctx.fillText(formatMoney(d.total, { showDec: false }), x + bw*0.35, y - 6);
     }
   });
+
+  return { padL, bw };
+}
+
+// Resúmenes textuales de los gráficos de canvas, para lectores de pantalla
+// (el canvas no expone nada por sí solo — ver también la <ul class="sr-only"> con el detalle).
+function ritmoDiarioSummary(perDayRender){
+  if (perDayRender.length === 0 || perDayRender.every(v => v === 0)) return 'Ritmo diario de gastos: todavía sin gastos este mes.';
+  const max = Math.max(...perDayRender);
+  const maxDay = perDayRender.indexOf(max) + 1;
+  const total = perDayRender.reduce((s,v) => s+v, 0);
+  return `Ritmo diario de gastos del mes. Total hasta hoy: ${fm(total)}. Día de mayor gasto: día ${maxDay}, con ${fm(max)}.`;
+}
+function historicoSummary(history){
+  const withData = history.filter(h => h.total > 0);
+  if (withData.length === 0) return 'Histórico de los últimos 6 meses: sin datos.';
+  const parts = history.map(h => `${monthShort(h.mes).replace('.','')}: ${fm(h.total)}`);
+  return `Histórico de gasto de los últimos 6 meses. ${parts.join(', ')}.`;
 }
 
 /* ==============================================================
